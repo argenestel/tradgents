@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+:root {
+  /* Light "clean fintech" system from design/*.png. */
+  --bg: #f1f5fb;
+  --surface: #ffffff;
+  --surface-2: #f6f8fc;
+  --line: #e2e8f2;
+  --fg: #0e1a30;
+  --muted: #5a6a85;
+  --accent: #1f4fd8; /* Monad: blue. Solana app uses violet (#6d3df0) */
+  --accent-soft: #e8eefe;
+  --gain: #12874a;
+  --loss: #d8302f;
+  --warn: #a35a00;
+  --warn-bg: #fff6df;
+  --estimate: #a35a00;
+  --shadow: 0 1px 2px rgba(14, 26, 48, 0.04), 0 8px 24px rgba(14, 26, 48, 0.05);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-serif-display), Georgia, serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* tabular numerals everywhere money/metrics appear */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* hatched fill = estimated value, never color alone */
+.hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(163, 90, 0, 0.45) 0 4px,
+    rgba(163, 90, 0, 0.12) 4px 8px
+  );
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* serif display face for page titles and names */
+.display {
+  font-family: var(--font-serif);
+  letter-spacing: -0.02em;
+}
