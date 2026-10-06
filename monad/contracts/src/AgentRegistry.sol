@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
@@ -9,9 +10,9 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 /// @title AgentRegistry
 /// @notice Non-custodial directory bond escrow for Tradgents agents.
 ///         Holds a returnable native MON bond. Does not hold trading keys or
-///         route funds. No automated slashing — admin slashes to treasury
-///         only after an off-chain dispute.
-contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
+///         route funds. A bond can be slashed by the owner only during a
+///         requested unbond cooldown and only with a nonzero reason code.
+contract AgentRegistry is Ownable2Step, ReentrancyGuard, EIP712 {
     bytes32 public constant REGISTER_TYPEHASH = keccak256(
         "Register(address agentWallet,address ownerWallet,bytes32 metadataHash,uint256 nonce,uint256 deadline)"
     );
@@ -30,6 +31,7 @@ contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
         uint256 bondWei;
         Status status;
         uint64 registeredAt;
+        uint64 unbondRequestedAt;
         uint64 withdrawableAt;
     }
 
@@ -48,9 +50,11 @@ contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
         uint256 bondWei,
         uint256 nonce
     );
+    event UnbondRequested(address indexed agentWallet, uint64 availableAt);
     event BondWithdrawn(address indexed agentWallet, address indexed ownerWallet, uint256 amount);
     event AgentPaused(address indexed agentWallet, address indexed guardian, bytes32 reason);
-    event AgentSlashed(address indexed agentWallet, address indexed treasury, uint256 amount, bytes32 reason);
+    event AgentUnpaused(address indexed agentWallet, address indexed guardian);
+    event AgentSlashed(address indexed agentWallet, address indexed treasury, uint256 amount, bytes32 reasonCode);
     event MinBondUpdated(uint256 minBondWei);
     event UnbondDelayUpdated(uint64 unbondDelay);
     event GuardianUpdated(address indexed guardian);
@@ -66,6 +70,10 @@ contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
     error NotAgentOwner();
     error NotGuardian();
     error CooldownActive();
+    error UnbondNotRequested();
+    error UnbondAlreadyRequested();
+    error NotSlashingWindow();
+    error InvalidReasonCode();
     error NotWithdrawable();
     error InvalidStatus();
 
@@ -133,18 +141,33 @@ contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
             bondWei: msg.value,
             status: Status.Active,
             registeredAt: ts,
-            withdrawableAt: ts + unbondDelay
+            unbondRequestedAt: 0,
+            withdrawableAt: 0
         });
 
         emit AgentRegistered(agentWallet, ownerWallet, metadataHash, msg.value, nonce);
     }
 
-    /// @notice Owner withdraws the bond after the cooldown, if not paused or slashed.
-    function withdrawBond(address agentWallet) external nonReentrant {
+    /// @notice Start the unbond cooldown. Registration time never starts withdrawal eligibility.
+    function requestUnbond(address agentWallet) external {
+        Agent storage a = agents[agentWallet];
+        if (a.status == Status.None) revert NotRegistered();
+        if (msg.sender != a.owner) revert NotAgentOwner();
+        if (a.status != Status.Active) revert InvalidStatus();
+        if (a.unbondRequestedAt != 0) revert UnbondAlreadyRequested();
+        uint64 availableAt = uint64(block.timestamp) + unbondDelay;
+        a.unbondRequestedAt = uint64(block.timestamp);
+        a.withdrawableAt = availableAt;
+        emit UnbondRequested(agentWallet, availableAt);
+    }
+
+    /// @notice Owner withdraws only after explicitly requesting unbond and waiting the full cooldown.
+    function withdraw(address agentWallet) external nonReentrant {
         Agent storage a = agents[agentWallet];
         if (a.status == Status.None) revert NotRegistered();
         if (msg.sender != a.owner) revert NotAgentOwner();
         if (a.status != Status.Active) revert NotWithdrawable();
+        if (a.unbondRequestedAt == 0) revert UnbondNotRequested();
         if (block.timestamp < a.withdrawableAt) revert CooldownActive();
 
         uint256 amount = a.bondWei;
@@ -170,14 +193,15 @@ contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
         Agent storage a = agents[agentWallet];
         if (a.status != Status.Paused) revert InvalidStatus();
         a.status = Status.Active;
-        emit AgentPaused(agentWallet, msg.sender, bytes32(0));
+        emit AgentUnpaused(agentWallet, msg.sender);
     }
 
-    /// @notice Admin slash after an off-chain dispute. Bond is sent to treasury.
-    ///         There is no automated slashing.
-    function slashAgent(address agentWallet, bytes32 reason) external onlyOwner nonReentrant {
+    /// @notice Owner may slash only during the owner's requested unbond cooldown, with an auditable reason code.
+    function slashAgent(address agentWallet, bytes32 reasonCode) external onlyOwner nonReentrant {
         Agent storage a = agents[agentWallet];
         if (a.status != Status.Active && a.status != Status.Paused) revert InvalidStatus();
+        if (a.unbondRequestedAt == 0 || block.timestamp >= a.withdrawableAt) revert NotSlashingWindow();
+        if (reasonCode == bytes32(0)) revert InvalidReasonCode();
 
         uint256 amount = a.bondWei;
         a.bondWei = 0;
@@ -187,7 +211,7 @@ contract AgentRegistry is Ownable, ReentrancyGuard, EIP712 {
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert NotWithdrawable();
 
-        emit AgentSlashed(agentWallet, to, amount, reason);
+        emit AgentSlashed(agentWallet, to, amount, reasonCode);
     }
 
     function setMinBondWei(uint256 minBondWei_) external onlyOwner {

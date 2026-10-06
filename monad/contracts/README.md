@@ -1,14 +1,14 @@
 # Tradgents AgentRegistry (Foundry)
 
-Non-custodial MON bond escrow + EIP-712 / ERC-1271 registration. The contract
-never holds trading keys and has **no automated slashing**. An admin may slash
-to `treasury` only after an off-chain dispute.
+Non-custodial MON bond escrow with EIP-712 / ERC-1271 registration. The registry does not hold agent trading keys. Slashing is an explicit admin action, limited to the owner's requested unbond cooldown and requiring a nonzero reason code.
 
-## Layout
+## Contract semantics
 
-- `src/AgentRegistry.sol` — registry
-- `test/AgentRegistry.t.sol` — unit tests (forge)
-- `script/Deploy.s.sol` — deploy; private key from `DEPLOYER_PRIVATE_KEY` only
+- Registration records the agent wallet, owner, metadata hash, bond, and nonce. Registration does **not** start the withdrawal cooldown.
+- The owner calls `requestUnbond(agentWallet)` to start the configured cooldown.
+- The owner may call `withdraw(agentWallet)` after cooldown expiry if the agent is not paused or slashed.
+- The owner may slash only during the requested cooldown; `AgentSlashed` includes the reason code.
+- Ownership transfer is two-step (`transferOwnership`, then `acceptOwnership`). Guardian pause/unpause and bond lifecycle events are indexed by `mon/api`.
 
 ## Local tests
 
@@ -16,83 +16,12 @@ to `treasury` only after an off-chain dispute.
 forge test -vv
 ```
 
-Installed Foundry is 1.5.1; the `network = "monad"` / `--network monad` switch is Foundry ≥1.8 (docs.monad.xyz). Tests still run on the local EVM.
+Tests use a keyless ERC-1271 fixture and execute only in Foundry's local EVM. They do not send network transactions or load a private key.
 
-## Rehearse on a local Anvil node (do this, not a public broadcast)
+## Deployment
 
-Anvil well-known account 0 is fine **only** on a local node:
+`script/Deploy.s.sol` reads `DEPLOYER_PRIVATE_KEY` from the environment, starts Foundry broadcasting, and prints the deployer and deployed registry address. Keep the key in the operator's secret manager/environment; never put it in this repository, a command-line flag, or API/worker environment.
 
-```bash
-anvil --network monad --port 8545
-```
+Before a human deploys, verify the official Monad mainnet network details at <https://docs.monad.xyz/developer-essentials/network-information> (chain ID `143`, RPC `https://rpc.monad.xyz`) and perform a simulation first. A deployment address has **not** been established by this implementation; set `REGISTRY_ADDRESS` only after the operator deploys and verifies bytecode on the intended chain.
 
-In another shell, from this directory:
-
-```bash
-export DEPLOYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-export GUARDIAN=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
-export TREASURY=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
-export MIN_BOND_WEI=100000000000000000
-export UNBOND_DELAY=604800
-
-cast chain-id --rpc-url http://127.0.0.1:8545
-
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url http://127.0.0.1:8545 \
-  --broadcast \
-  --private-key "$DEPLOYER_PRIVATE_KEY"
-```
-
-Do **not** reuse that well-known key on any public network.
-
-## Monad testnet — exact commands (human deploys)
-
-Verified against [Network Information - Testnet](https://docs.monad.xyz/developer-essentials/testnet) (fetched at build time):
-
-| Field | Value |
-|---|---|
-| Network name | Monad Testnet |
-| Chain ID | `10143` |
-| Native token | MON |
-| Public RPC | `https://testnet-rpc.monad.xyz` (QuickNode, 50 rps) |
-| Alt RPC | `https://rpc-testnet.monadinfra.com` |
-| Explorer | https://testnet.monadvision.com |
-| Explorer | https://testnet.monadscan.com |
-| Faucet | https://faucet.monad.xyz |
-| App hub | https://testnet.monad.xyz |
-
-Fund the deployer from the faucet first. **Never** put a key in a file, in this
-repo, or on the command line history if you can avoid it. The script reads
-`DEPLOYER_PRIVATE_KEY` from the environment only.
-
-```bash
-# 1. Confirm you are talking to Monad testnet
-cast chain-id --rpc-url https://testnet-rpc.monad.xyz
-# expect: 10143
-
-# 2. Export a funded deployer key (do not commit, do not write to disk)
-export DEPLOYER_PRIVATE_KEY         # 0x-prefixed hex
-export GUARDIAN                     # pause role
-export TREASURY                     # slash proceeds
-export MIN_BOND_WEI=100000000000000000   # 0.1 MON; tune to ~USD 50–100 later
-export UNBOND_DELAY=604800               # 7 days
-
-# 3. Simulate, then broadcast (human only — do not run from automation)
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url https://testnet-rpc.monad.xyz \
-  --chain 10143 \
-  --private-key "$DEPLOYER_PRIVATE_KEY"
-
-# When the simulation looks right:
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url https://testnet-rpc.monad.xyz \
-  --chain 10143 \
-  --broadcast \
-  --private-key "$DEPLOYER_PRIVATE_KEY"
-```
-
-Contract verification (Sourcify / Monadscan API) is **not wired here**. I did
-not find a documented `forge verify-contract` explorer API key flow on
-docs.monad.xyz at build time. Verify manually on MonadVision / Monadscan if needed.
-
-EIP-712 domain after deploy: `{ name: "Tradgents", version: "1", chainId: 10143, verifyingContract: <deployed> }`.
+Required deployment environment: `DEPLOYER_PRIVATE_KEY`, `GUARDIAN`, `TREASURY`, and optionally `MIN_BOND_WEI` (default `0.1 MON`) and `UNBOND_DELAY` (default 7 days). A human operator may explicitly add `--broadcast` to the Foundry script command after reviewing the simulation; no deployment was broadcast as part of this work.

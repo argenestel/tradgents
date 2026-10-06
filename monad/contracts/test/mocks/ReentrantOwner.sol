@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface IAgentRegistry {
-    function withdrawBond(address agentWallet) external;
+    function withdraw(address agentWallet) external;
     function register(
         address agentWallet,
         address ownerWallet,
@@ -13,7 +13,7 @@ interface IAgentRegistry {
     ) external payable;
 }
 
-/// @notice Owner that tries to reenter withdrawBond when receiving the bond.
+/// @notice Owner that tries to reenter withdraw when receiving the bond.
 contract ReentrantOwner {
     IAgentRegistry public registry;
     address public agent;
@@ -29,13 +29,13 @@ contract ReentrantOwner {
     }
 
     function withdraw() external {
-        registry.withdrawBond(agent);
+        registry.withdraw(agent);
     }
 
     receive() external payable {
         hits++;
         if (address(registry) != address(0) && agent != address(0) && hits < 4) {
-            try registry.withdrawBond(agent) {
+            try registry.withdraw(agent) {
                 // should not succeed
             } catch {
                 nestedFailures++;

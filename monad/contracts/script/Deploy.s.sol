@@ -6,9 +6,12 @@ import {AgentRegistry} from "../src/AgentRegistry.sol";
 
 /// @notice Deploy AgentRegistry. Key is read from DEPLOYER_PRIVATE_KEY only.
 ///         Do not broadcast to a public network from automation — the human
-///         deploys with a funded key. See README.md for Monad testnet commands.
+///         deploys with a funded key after confirming the mainnet RPC/chain.
 contract Deploy is Script {
+    error WrongChain(uint256 actual);
+
     function run() external {
+        if(block.chainid!=143)revert WrongChain(block.chainid);
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address guardian = vm.envAddress("GUARDIAN");
         address treasury = vm.envAddress("TREASURY");
@@ -19,6 +22,7 @@ contract Deploy is Script {
         AgentRegistry registry = new AgentRegistry(guardian, treasury, minBond, delay);
         vm.stopBroadcast();
 
+        console.log("deployer", vm.addr(pk));
         console.log("AgentRegistry", address(registry));
         console.log("owner", registry.owner());
         console.log("guardian", registry.guardian());

@@ -7,6 +7,5 @@ export default defineConfig({
     testTimeout: 60_000,
     fileParallelism: false,
     pool: "forks",
-    execArgv: ["--experimental-sqlite"],
   },
 });

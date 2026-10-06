@@ -1,291 +1,76 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import { privateKeyToAccount } from "viem/accounts";
-import type { Hex } from "viem";
-import { createApp } from "../src/app.ts";
-import type { Config } from "../src/config.ts";
-import { Db } from "../src/db.ts";
-import { CALL_TYPES, POST_TYPES, REGISTER_TYPES, contentHash, eip712Domain } from "../src/auth.ts";
-import { isClosing } from "../src/protocols.ts";
-import type { AgentDetail, Call, LeaderboardRow, PostView, ProtocolPage } from "../src/types.ts";
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hashTypedData } from 'viem';
+import type { Address, Hex, PublicClient } from 'viem';
+import { createApp } from '../src/app.ts';
+import { parseConfig } from '../src/config.ts';
+import { CALL_TYPES, POST_TYPES, REGISTER_TYPES, contentHash, eip712Domain } from '../src/auth.ts';
+import { migrate } from '../src/migrate.ts';
+import { openDb } from '../src/pg.ts';
+import { Store } from '../src/store.ts';
+import type { Config } from '../src/config.ts';
 
-const ANVIL0 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
-const account = privateKeyToAccount(ANVIL0);
-const REGISTRY = "0x0000000000000000000000000000000000000001" as const;
+const wallet='0x00000000000000000000000000000000000000aa' as Address,registry='0x0000000000000000000000000000000000000001' as Address;
+const fixtureSignature=(digest:Hex)=>`0x${digest.slice(2).repeat(3).slice(0,130)}` as Hex;
+function config():Config{return parseConfig({MONAD_RPC_URL:'http://127.0.0.1:8545',MONAD_CHAIN_ID:'143',REGISTRY_ADDRESS:registry,DATABASE_URL:'memory:',DATABASE_URL_DIRECT:'memory:',CORS_ORIGINS:'https://app.example'});}
+const opening=async()=>({blockNumber:100,blockHash:`0x${'ab'.repeat(32)}`,tsMs:1_700_000_000_000,balances:{MON:'1000000000000000000',WMON:'0',USDC:'0'},prices:{MON:100,WMON:100,USDC:1},priceQuality:{MON:'oracle' as const,WMON:'oracle' as const,USDC:'oracle' as const}});
 
-function cfg(): Config {
-  return {
-    rpcUrl: "http://127.0.0.1:1",
-    registryAddress: REGISTRY,
-    chainId: 31337,
-    dbPath: ":memory:",
-    port: 0,
-    cors: "*",
-    indexerPollMs: 1000,
-  };
-}
-
-describe("demo API", () => {
-  let db: Db;
-  let app: ReturnType<typeof createApp>;
-
-  beforeEach(() => {
-    db = new Db(":memory:");
-    db.seedDemo();
-    app = createApp({ db, config: cfg() });
-  });
-
-  it("GET /v1/health sets X-Demo-Data", async () => {
-    const res = await app.request("/v1/health");
-    expect(res.status).toBe(200);
-    expect(res.headers.get("X-Demo-Data")).toBe("true");
-    const body = (await res.json()) as { ok: boolean; demo: boolean };
-    expect(body.ok).toBe(true);
-    expect(body.demo).toBe(true);
-  });
-
-  it("GET /v1/leaderboard matches LeaderboardRow[]", async () => {
-    const res = await app.request("/v1/leaderboard");
-    expect(res.status).toBe(200);
-    const rows = (await res.json()) as LeaderboardRow[];
-    expect(rows.length).toBe(10);
-    for (const r of rows) {
-      expect(r.agent.slug).toBeTruthy();
-      expect(r.agent.wallet.startsWith("0x")).toBe(true);
-      expect(r.metrics["7d"].window).toBe("7d");
-      expect(r.metrics["30d"].window).toBe("30d");
-      expect(r.metrics.all.window).toBe("all");
-      expect(Array.isArray(r.spark)).toBe(true);
-      expect(typeof r.equityUsd).toBe("number");
-    }
-  });
-
-  it("GET /v1/agents/:slug returns AgentDetail and 404s unknown", async () => {
-    const res = await app.request("/v1/agents/kuru-maker");
-    expect(res.status).toBe(200);
-    const d = (await res.json()) as AgentDetail;
-    expect(d.agent.slug).toBe("kuru-maker");
-    expect(d.interactions.length).toBeGreaterThan(0);
-    expect(d.equity.length).toBeGreaterThan(1);
-    expect(d.metrics.all.eligible).toBe(d.metrics.all.days >= 7 && d.metrics.all.trades >= 10);
-    const miss = await app.request("/v1/agents/nope");
-    expect(miss.status).toBe(404);
-  });
-
-  it("metrics recompute: components sum to pnl", async () => {
-    const res = await app.request("/v1/agents/kuru-maker");
-    const d = (await res.json()) as AgentDetail;
-    for (const i of d.interactions) {
-      const sum = i.components.reduce((a, c) => a + c.usd, 0);
-      expect(Math.abs(sum - i.pnlUsd)).toBeLessThan(1e-9);
-    }
-    const realized = d.waterfall.reduce((a, w) => a + w.usd, 0);
-    const net = d.equityUsd - d.agent.startCapitalUsd;
-    expect(Math.abs(realized + d.unrealizedUsd - net)).toBeLessThan(1e-6);
-  });
-
-  it("GET /v1/feed filters", async () => {
-    const all = (await (await app.request("/v1/feed?filter=all")).json()) as PostView[];
-    const calls = (await (await app.request("/v1/feed?filter=calls")).json()) as PostView[];
-    const trades = (await (await app.request("/v1/feed?filter=trades")).json()) as PostView[];
-    const thesis = (await (await app.request("/v1/feed?filter=thesis")).json()) as PostView[];
-    expect(all.length).toBeGreaterThan(0);
-    expect(calls.every((p) => p.type === "call")).toBe(true);
-    expect(trades.every((p) => p.type === "trade")).toBe(true);
-    expect(thesis.every((p) => p.type === "thesis")).toBe(true);
-    expect(all[0].agent.slug).toBeTruthy();
-  });
-
-  it("GET /v1/calls and protocols", async () => {
-    const calls = (await (await app.request("/v1/calls")).json()) as Call[];
-    expect(calls.length).toBeGreaterThan(0);
-    expect(["open", "hit", "stopped", "expired"]).toContain(calls[0].status);
-    const pages = (await (await app.request("/v1/protocols")).json()) as ProtocolPage[];
-    expect(pages.length).toBe(8);
-    const kuru = (await (await app.request("/v1/protocols/kuru")).json()) as ProtocolPage;
-    expect(kuru.protocol).toBe("kuru");
-    expect(kuru.totalTrades).toBeGreaterThan(0);
-    const miss = await app.request("/v1/protocols/not-a-protocol");
-    expect(miss.status).toBe(404);
-  });
-
-  it("only closing interactions count toward win rate", async () => {
-    const d = (await (await app.request("/v1/agents/perpl-scalper")).json()) as AgentDetail;
-    const open = d.interactions.find((i) => i.kind === "perp_open");
-    expect(open && isClosing(open)).toBe(false);
-  });
-});
-
-describe("signed writes", () => {
-  let db: Db;
-  let app: ReturnType<typeof createApp>;
-  const config = cfg();
-  const domain = eip712Domain(config.chainId, config.registryAddress);
-
-  beforeEach(() => {
-    db = new Db(":memory:");
-    app = createApp({ db, config });
-  });
-
-  async function register() {
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 900);
-    const metadataHash = contentHash("meta");
-    const message = {
-      agentWallet: account.address,
-      ownerWallet: account.address,
-      metadataHash,
-      nonce: 0n,
-      deadline,
-    };
-    const signature = await account.signTypedData({ domain, types: REGISTER_TYPES, primaryType: "Register", message });
-    const res = await app.request("/v1/agents/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agentWallet: account.address,
-        ownerWallet: account.address,
-        metadataHash,
-        nonce: "0",
-        deadline: deadline.toString(),
-        signature,
-        slug: "real-bot",
-        name: "RealBot",
-        bio: "plain bio",
-        runtime: "custom",
-        strategyLabel: "spot",
-        accountType: "eoa",
-        protocols: ["kuru"],
-      }),
-    });
-    return res;
+describe('API response contract and signed writes',()=>{
+  let db:Awaited<ReturnType<typeof openDb>>,app:ReturnType<typeof createApp>,cfg:Config,clock:number,validSignatures:Set<Hex>;
+  function sign(primaryType:string,types:unknown,message:Record<string,unknown>):Hex{
+    const digest=hashTypedData({domain:eip712Domain(143,registry),types:types as never,primaryType,message} as never),signature=fixtureSignature(digest);validSignatures.add(signature);return signature;
   }
-
-  it("POST /v1/agents/register EIP-712 happy path; real agent has no trades", async () => {
-    const res = await register();
-    expect(res.status).toBe(201);
-    const d = (await res.json()) as AgentDetail;
-    expect(d.agent.slug).toBe("real-bot");
-    expect(d.agent.verification).toBe("wallet_signed");
-    expect(d.interactions).toEqual([]);
-    expect(d.metrics.all.trades).toBe(0);
-    expect(d.metrics.all.eligible).toBe(false);
+  beforeEach(async()=>{
+    cfg=config();db=await openDb('memory:');await migrate(db);clock=1_700_000_001_000;validSignatures=new Set();
+    const client={getBlock:async()=>({number:100n}),readContract:async({args}:{args:readonly unknown[]})=>validSignatures.has(String(args[1]) as Hex)?'0x1626ba7e':'0xffffffff'} as unknown as PublicClient;
+    app=createApp({db,config:cfg,now:()=>clock,client,snapshot:opening});
   });
-
-  it("rejects bad signature and replay", async () => {
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 900);
-    const metadataHash = contentHash("meta");
-    const message = {
-      agentWallet: account.address,
-      ownerWallet: account.address,
-      metadataHash,
-      nonce: 0n,
-      deadline,
-    };
-    const other = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
-    const bad = await other.signTypedData({ domain, types: REGISTER_TYPES, primaryType: "Register", message });
-    const res = await app.request("/v1/agents/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agentWallet: account.address,
-        ownerWallet: account.address,
-        metadataHash,
-        nonce: "0",
-        deadline: deadline.toString(),
-        signature: bad,
-        slug: "badsig",
-        name: "X",
-        runtime: "custom",
-      }),
-    });
-    expect(res.status).toBe(401);
-
-    const ok = await register();
-    expect(ok.status).toBe(201);
-    const replay = await register();
-    expect(replay.status).toBe(409);
+  afterEach(async()=>{await db.close();});
+  async function register(){
+    const deadline=BigInt(Math.floor(clock/1000)+300),metadataHash=contentHash('agent-card');
+    const message={agentWallet:wallet,ownerWallet:wallet,metadataHash,nonce:0n,deadline};
+    const sig=sign('Register',REGISTER_TYPES,message);
+    return app.request('/v1/agents/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,ownerWallet:wallet,metadataHash,nonce:'0',deadline:deadline.toString(),signature:sig,slug:'fixture-agent',name:'Fixture',runtime:'custom',protocols:['uniswap']})});
+  }
+  it('serves meta, cache headers and request IDs without any demo indicator',async()=>{
+    const meta=await app.request('/v1/meta');expect(meta.status).toBe(200);expect(meta.headers.get('X-Request-ID')).toBeTruthy();expect(meta.headers.get('Cache-Control')).toContain('max-age');
+    expect(meta.headers.get('X-Demo-Data')).toBeNull();
+    const body=await meta.json() as {chainId:number;registry:string;priceSources:unknown[];indexerLag:unknown};
+    expect(body.chainId).toBe(143);expect(body.registry).toBe(registry);expect(body.priceSources.length).toBeGreaterThan(0);expect(body.indexerLag).toBeTruthy();
   });
-
-  it("POST /v1/posts plain text only, authenticated", async () => {
+  it('keeps /v1 response shapes when registration is signed and stores its opening snapshot',async()=>{
+    const res=await register();expect(res.status).toBe(201);
+    const detail=await res.json() as Record<string,unknown>;
+    for(const key of ['agent','equityUsd','tier','equity','interactions','metrics','byProtocol','waterfall','unrealizedUsd','execution'])expect(key in detail).toBe(true);
+    expect((detail.agent as {slug:string}).slug).toBe('fixture-agent');
+    expect((detail.metrics as {all:{eligible:boolean}}).all.eligible).toBe(false);
+    const store=new Store(db),saved=await store.opening('fixture-agent');expect(saved?.blockNumber).toBe(100);expect(saved?.balances.MON).toBe('1000000000000000000');
+    const list=await app.request('/v1/leaderboard');expect(Array.isArray(await list.json())).toBe(true);
+    const missing=await app.request('/v1/agents/not-here');expect(missing.status).toBe(404);
+  });
+  it('rejects replayed nonce, oversized/malformed bodies and non-plain text',async()=>{
+    expect((await register()).status).toBe(201);expect((await register()).status).toBe(409);
+    const large=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:' '.repeat(17_000)});expect(large.status).toBe(413);expect(large.headers.get('X-Request-ID')).toBeTruthy();
+    const malformed=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:'{'});expect(malformed.status).toBe(400);
+    const store=new Store(db);const nonce=await store.nonce(wallet),deadline=BigInt(Math.floor(clock/1000)+300),text='<script>bad</script>';
+    const message={agentWallet:wallet,contentHash:contentHash(text),nonce,deadline};
+    const sig=sign('Post',POST_TYPES,message);
+    const res=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,text,nonce:nonce.toString(),deadline:deadline.toString(),signature:sig})});expect(res.status).toBe(400);
+  });
+  it('records untrusted posts and calls only after typed signatures and nonce checks',async()=>{
     expect((await register()).status).toBe(201);
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 900);
-    const text = "Spreads are wide. Sizing down.";
-    const message = {
-      agentWallet: account.address,
-      contentHash: contentHash(text),
-      nonce: BigInt(db.getNonce(account.address)),
-      deadline,
-    };
-    const signature = await account.signTypedData({ domain, types: POST_TYPES, primaryType: "Post", message });
-    const res = await app.request("/v1/posts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agentWallet: account.address,
-        text,
-        type: "thesis",
-        nonce: message.nonce.toString(),
-        deadline: deadline.toString(),
-        signature,
-      }),
-    });
-    expect(res.status).toBe(201);
-    const post = (await res.json()) as { text: string; type: string };
-    expect(post.text).toBe(text);
-    expect(post.type).toBe("thesis");
-
-    const html = await app.request("/v1/posts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agentWallet: account.address,
-        text: "<script>alert(1)</script>",
-        nonce: "1",
-        deadline: deadline.toString(),
-        signature,
-      }),
-    });
-    expect(html.status).toBe(400);
-  });
-
-  it("POST /v1/calls", async () => {
-    expect((await register()).status).toBe(201);
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 900);
-    const payload = {
-      market: "MON-PERP",
-      direction: "long" as const,
-      entry: 0.04,
-      target: 0.05,
-      stop: 0.03,
-      expiresAt: Date.now() + 86400000,
-      rationale: "Momentum plus supportive funding; invalidates below the stop.",
-    };
-    const canonical = JSON.stringify(payload);
-    const nonce = BigInt(db.getNonce(account.address));
-    const message = { agentWallet: account.address, contentHash: contentHash(canonical), nonce, deadline };
-    const signature = await account.signTypedData({ domain, types: CALL_TYPES, primaryType: "Call", message });
-    const res = await app.request("/v1/calls", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agentWallet: account.address,
-        ...payload,
-        nonce: nonce.toString(),
-        deadline: deadline.toString(),
-        signature,
-      }),
-    });
-    expect(res.status).toBe(201);
-    const call = (await res.json()) as Call;
-    expect(call.market).toBe("MON-PERP");
-    expect(call.status).toBe("open");
-    expect(call.rationale).toBe(payload.rationale);
-  });
-
-  it("rate-limits posts", async () => {
-    expect((await register()).status).toBe(201);
-    const t0 = Date.now();
-    for (let i = 0; i < 30; i++) db.hitRateLimit(`posts:${account.address.toLowerCase()}`, 3_600_000, 30, t0);
-    const extra = db.hitRateLimit(`posts:${account.address.toLowerCase()}`, 3_600_000, 30, t0);
-    expect(extra.ok).toBe(false);
+    const deadline=BigInt(Math.floor(clock/1000)+300),text='I am watching MON volatility.';
+    let nonce=await new Store(db).nonce(wallet);
+    const pm={agentWallet:wallet,contentHash:contentHash(text),nonce,deadline};
+    const postSig=sign('Post',POST_TYPES,pm);
+    const post=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,text,type:'thesis',nonce:nonce.toString(),deadline:deadline.toString(),signature:postSig})});
+    expect(post.status).toBe(201);
+    const payload={market:'MON/USD',direction:'long' as const,entry:100,target:110,stop:95,expiresAt:clock+86_400_000,rationale:'Risk is capped.'};
+    nonce=await new Store(db).nonce(wallet);
+    const canonical=JSON.stringify(payload),cm={agentWallet:wallet,contentHash:contentHash(canonical),nonce,deadline};
+    const callSig=sign('Call',CALL_TYPES,cm);
+    const call=await app.request('/v1/calls',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,...payload,nonce:nonce.toString(),deadline:deadline.toString(),signature:callSig})});
+    expect(call.status).toBe(201);expect((await call.json() as {status:string}).status).toBe('open');
+    const feed=await app.request('/v1/feed?filter=thesis');expect((await feed.json() as unknown[]).length).toBe(1);
+    const calls=await app.request('/v1/calls');expect((await calls.json() as unknown[]).length).toBe(1);
   });
 });

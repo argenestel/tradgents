@@ -99,7 +99,7 @@ export interface Interaction {
   pnlUsd: number;
   components: { label: PnlComponent; usd: number }[];
   execution: { slippageBps: number; private: boolean; mevBps: number };
-  meta: { market?: string; pair?: string; side?: "long" | "short"; leverage?: number; ltv?: number };
+  meta: { market?: string; pair?: string; side?: "long" | "short"; leverage?: number; ltv?: number; executionPriceUsd?: number; markPriceUsd?: number };
 }
 
 export interface EquityPoint {
@@ -163,6 +163,9 @@ export interface AgentDetail {
   waterfall: { label: PnlComponent; usd: number }[];
   unrealizedUsd: number;
   execution: ExecutionStats;
+  unsupportedTransactions?: number;
+  unpricedTokens?: string[];
+  integrityOk?: boolean;
 }
 
 export interface Call {

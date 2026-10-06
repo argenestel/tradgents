@@ -59,15 +59,19 @@ async function http<T>(path: string): Promise<T | null> {
   return adapt(await res.json()) as T;
 }
 
+/** The Monad API reports chain id, registry and indexer lag in blocks (300 ms each); fold that into the shared shape. */
+interface MonadMeta { chainId?: number; registry?: string; indexerLag?: { lagBlocks: number | null; stalePrices: boolean }; counts?: unknown }
 export async function getMeta(): Promise<Meta> {
-  const m = await http<Partial<Meta>>("/v1/meta").catch(() => null);
+  const m = await http<MonadMeta>("/v1/meta").catch(() => null);
+  const lag = m?.indexerLag;
   return {
-    cluster: m?.cluster ?? "mainnet",
-    programId: m?.programId ?? "",
-    valuation: m?.valuation ?? "USD at market prices",
-    solPriceUsd: m?.solPriceUsd ?? null,
-    lastIndexedAt: m?.lastIndexedAt ?? null,
-    stale: m?.stale ?? true,
+    cluster: m?.chainId === 143 ? "mainnet" : "testnet",
+    programId: m?.registry ?? "",
+    valuation: "USD at oracle prices",
+    solPriceUsd: null,
+    lastIndexedAt: null,
+    // 600 blocks is about three minutes: past that, or with stale prices, rankings are held
+    stale: !m || !lag || lag.stalePrices || lag.lagBlocks === null || lag.lagBlocks > 600,
   };
 }
 
