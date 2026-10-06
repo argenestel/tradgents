@@ -3,14 +3,17 @@ import path from 'node:path';
 import { z } from 'zod';
 
 export const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
+export const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+export const DEVNET_USDC = 'BRjpCHtyQLNCo8gqRUr8jtdAj5AjPYQaoqbvcZiHok1k';
 export const WSOL = 'So11111111111111111111111111111111111111112';
 export const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const USDT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
-export const STABLE_MINTS = new Set([USDC, USDT]);
+export const STABLE_MINTS = new Set([USDC, USDT, DEVNET_USDC]);
 
 const mint = z.string().min(32).max(44);
 export const policySchema = z.object({
-  network: z.literal('mainnet-beta'),
+  /** devnet uses Orca's test pool and test money; mainnet-beta uses Jupiter and real money. */
+  network: z.enum(['mainnet-beta', 'devnet']),
   rpcUrl: z.string().url(),
   keypairPath: z.string().min(1),
   stateDir: z.string().min(1),
@@ -36,8 +39,10 @@ export const policySchema = z.object({
   maxTradesPerDay: z.number().int().positive().max(10_000).default(50),
   /** If set, every program the simulation shows being invoked must be on this list (plus the built-in infrastructure and Jupiter). */
   routePrograms: z.array(z.string().min(32).max(44)).optional(),
-  allowedMints: z.record(mint, z.string().min(1).max(12)).default({ [WSOL]: 'SOL', [USDC]: 'USDC', [USDT]: 'USDT' }),
-}).strict().refine(p => p.maxTradeUsd <= p.maxDailyUsd, 'maxTradeUsd must not exceed maxDailyUsd');
+  allowedMints: z.record(mint, z.string().min(1).max(12)).optional(),
+}).strict().refine(p => p.maxTradeUsd <= p.maxDailyUsd, 'maxTradeUsd must not exceed maxDailyUsd')
+  // the default token list depends on the network
+  .transform(p => ({ ...p, allowedMints: p.allowedMints ?? (p.network === 'devnet' ? { [WSOL]: 'SOL', [DEVNET_USDC]: 'USDC' } : { [WSOL]: 'SOL', [USDC]: 'USDC', [USDT]: 'USDT' }) }));
 export type Policy = z.infer<typeof policySchema>;
 
 /**

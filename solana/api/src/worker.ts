@@ -10,7 +10,7 @@ import type { Flags, Store } from './store';
 import type { Agent } from './types';
 
 /** Bump when ledger math changes so stored trades and equity are re-derived from raw transactions. */
-export const REPLAY_VERSION = '4';
+export const REPLAY_VERSION = '5';
 export const WORKER_LOCK = 7_261_002;
 const DEPEG_BAND = 0.015, SAMPLE_EVERY_MS = 30_000, MARK_EVERY_MS = 300_000, STALE_PRICE_MS = 10 * 60_000;
 
@@ -86,12 +86,12 @@ export async function symbolFor(store: Store, mint: string, fetcher: typeof fetc
 }
 
 /** Deposits and positions we cannot explain are never guessed at: they become flags that block ranking. */
-export async function rebuild(store: Store, agent: Agent, prices: { sampleSince: number }, now: number): Promise<{ balances: Map<string, bigint>; rentAccounts: number; flags: Flags } | undefined> {
+export async function rebuild(store: Store, agent: Agent, prices: { sampleSince: number; registryProgram?: string }, now: number): Promise<{ balances: Map<string, bigint>; rentAccounts: number; flags: Flags } | undefined> {
   const opening = await store.opening(agent.slug);
   if (!opening) return undefined;
   const rent = Number(await store.state(`opening-rent:${agent.slug}`) ?? 0);
   const raws = await store.rawFor(agent.wallet, opening.slot);
-  const facts = raws.flatMap(r => { const f = analyze(agent.wallet, r.signature, r.data as ChainTx); return f ? [f] : []; });
+  const facts = raws.flatMap(r => { const f = analyze(agent.wallet, r.signature, r.data as ChainTx, new Set(prices.registryProgram ? [prices.registryProgram] : [])); return f ? [f] : []; });
   const mints = [...new Set([WSOL, ...Object.keys(opening.balances), ...facts.flatMap(f => [...f.actual.keys()])])];
   const samples = await store.samples(mints, Math.min(opening.tsMs, prices.sampleSince) - 3_600_000);
   const symbols = new Map<string, string>();
@@ -148,7 +148,7 @@ export function createWorker(d: WorkerDeps) {
     const stale = (await d.store.state(`rebuilt:${agent.slug}`)) !== REPLAY_VERSION;
     const lastMark = Number(await d.store.state(`marked:${agent.slug}`) ?? 0);
     if (!added && !stale && t - lastMark < MARK_EVERY_MS) return;
-    const built = await rebuild(d.store, (await d.store.agent(agent.slug))!, { sampleSince: opening.tsMs }, t);
+    const built = await rebuild(d.store, (await d.store.agent(agent.slug))!, { sampleSince: opening.tsMs, registryProgram: d.cfg.programId }, t);
     if (!built) return;
     await d.store.setState(`rebuilt:${agent.slug}`, REPLAY_VERSION);
     // Mark at a single slot and compare with what the ledger believes. A mismatch twice in a row is flagged and blocks ranking.

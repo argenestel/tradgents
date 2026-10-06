@@ -168,6 +168,15 @@ describe('hardening from review', () => {
   });
 });
 
+describe('closed accounts', () => {
+  it('treats a wSOL account that the route closes (empty data after simulation) as holding nothing', async () => {
+    const c = chain(); const sim = c.simulate;
+    c.simulate = async (w, a) => { const r = await sim(w, a); return { ...r, accounts: [r.accounts[0], null, r.accounts[2], { lamports: 0n, owner: PROGRAMS.system, data: Buffer.alloc(0) }] }; };
+    signer = new Signer({ policy, secret, chain: c, wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
+    expect((await swap({ cmd: 'quote' })).ok).toBe(true);
+  });
+});
+
 describe('other commands', () => {
   it('reports status and remaining limits', async () => {
     await swap();
@@ -222,8 +231,8 @@ describe('policy file', () => {
     fs.chmodSync(f, 0o666); expect(() => loadPolicy(f)).toThrow(/writable by group or others/);
     fs.chmodSync(f, 0o600); fs.chmodSync(path.join(dir, 'k.json'), 0o644); expect(() => loadPolicy(f)).toThrow(/readable only by its owner/);
   });
-  it('rejects unknown fields, a trade limit above the daily limit, and non-mainnet networks', () => {
-    expect(() => policySchema.parse({ ...base(), extra: 1 })).toThrow(); expect(() => policySchema.parse({ ...base(), maxTradeUsd: 11 })).toThrow(); expect(() => policySchema.parse({ ...base(), network: 'devnet' })).toThrow();
+  it('rejects unknown fields, a trade limit above the daily limit, and unknown networks', () => {
+    expect(() => policySchema.parse({ ...base(), extra: 1 })).toThrow(); expect(() => policySchema.parse({ ...base(), maxTradeUsd: 11 })).toThrow(); expect(() => policySchema.parse({ ...base(), network: 'testnet' })).toThrow(); expect(policySchema.parse({ ...base(), network: 'devnet' }).allowedMints).toMatchObject({ BRjpCHtyQLNCo8gqRUr8jtdAj5AjPYQaoqbvcZiHok1k: 'USDC' });
   });
 });
 

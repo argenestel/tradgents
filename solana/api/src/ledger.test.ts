@@ -30,6 +30,12 @@ describe('analyze', () => {
     const f = analyze(W, 's', c)!;
     expect(f.foreign).toEqual([]); expect(f.programs).toContain(KAMINO); expect(f.swapProgram).toBe(true);
   });
+  it('treats the registry program as supported, so posting a bond does not make an agent unrankable', () => {
+    const REG = 'RegistryProgram11111111111111111111111111111';
+    const c = tx({ slot: 1, time: 1, pre: 1, post: 0.9 - 0.000005, programs: [REG] });
+    expect(analyze(W, 's', c)!.foreign).toEqual([REG]);
+    expect(analyze(W, 's', c, new Set([REG]))!.foreign).toEqual([]);
+  });
   it('ignores transactions the wallet is not in and refuses truncated logs', () => {
     expect(analyze('Someone', 's', tx({ slot: 1, time: 1, pre: 1, post: 1 }))).toBeUndefined();
     const c = tx({ slot: 1, time: 1, pre: 1, post: 1 }); c.meta!.logMessages!.push('Log truncated');

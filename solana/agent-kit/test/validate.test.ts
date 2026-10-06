@@ -45,7 +45,7 @@ describe('validatePlan', () => {
     reject(p => p.setupInstructions.push(ix(PROGRAMS.token, Buffer.from([6, 0, 0]), [acc(USDC_ATA, false, true), acc(W, true)])), /unsupported token instruction/);
   });
   it('rejects a swap that is not Jupiter, needs another signer, or skips the wallet\'s accounts', () => {
-    reject(p => { p.swapInstruction.programId = OTHER; }, /not the Jupiter program/);
+    reject(p => { p.swapInstruction.programId = OTHER; }, /not the expected program/);
     reject(p => p.swapInstruction.accounts.push(acc(OTHER, true)), /signature from someone else/);
     reject(p => { p.swapInstruction.accounts = p.swapInstruction.accounts.filter(a => a.pubkey !== USDC_ATA); }, /destination accounts/);
   });

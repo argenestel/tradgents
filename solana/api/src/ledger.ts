@@ -42,7 +42,7 @@ function programsOf(logs: string[]) {
 const bump = (m: Map<string, bigint>, k: string, v: bigint) => { if (v !== 0n) m.set(k, (m.get(k) ?? 0n) + v); };
 
 /** Pure extraction of what happened to one wallet in one transaction. Returns undefined when the wallet is not in it. */
-export function analyze(wallet: string, signature: string, tx: ChainTx): Facts | undefined {
+export function analyze(wallet: string, signature: string, tx: ChainTx, extraSupported: ReadonlySet<string> = new Set()): Facts | undefined {
   const meta = tx.meta;
   if (!meta || tx.blockTime == null) return undefined;
   // balances are indexed over static keys, then loaded writable, then loaded readonly addresses
@@ -55,7 +55,7 @@ export function analyze(wallet: string, signature: string, tx: ChainTx): Facts |
   const { all: programs, top } = programsOf(meta.logMessages);
   // Judge only what the wallet called directly: venues a supported router (Jupiter) routes through are its implementation detail.
   const base = { signature, slot: tx.slot, index: tx.transactionIndex ?? 0, ts: tx.blockTime * 1000, fee, programs,
-    foreign: top.filter(p => !INFRA_PROGRAMS.has(p) && !SWAP_PROGRAMS.has(p)), swapProgram: top.some(p => SWAP_PROGRAMS.has(p)) };
+    foreign: top.filter(p => !INFRA_PROGRAMS.has(p) && !SWAP_PROGRAMS.has(p) && !extraSupported.has(p)), swapProgram: top.some(p => SWAP_PROGRAMS.has(p)) };
   const decimals = new Map<string, number>([[WSOL, 9]]);
   const actual = new Map<string, bigint>(), economic = new Map<string, bigint>();
   if (meta.err) { // a failed transaction still paid its fee

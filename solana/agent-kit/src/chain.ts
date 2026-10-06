@@ -1,6 +1,6 @@
 import {
   AccountRole, address, appendTransactionMessageInstructions, compressTransactionMessageUsingAddressLookupTables, createKeyPairSignerFromBytes, createSolanaRpc,
-  createTransactionMessage, mainnet, fetchAddressesForLookupTables, getBase64EncodedWireTransaction, getSignatureFromTransaction, pipe,
+  createTransactionMessage, devnet, mainnet, fetchAddressesForLookupTables, getBase64EncodedWireTransaction, getSignatureFromTransaction, pipe,
   setTransactionMessageFeePayerSigner, setTransactionMessageLifetimeUsingBlockhash, signTransactionMessageWithSigners,
   type Address, type Instruction,
 } from '@solana/kit';
@@ -23,8 +23,8 @@ const roleOf = (a: { isSigner: boolean; isWritable: boolean }) =>
 const decode = (v: { lamports: bigint | number; owner: string; data: [string, string] } | null): AcctInfo | null =>
   v ? { lamports: BigInt(v.lamports), owner: v.owner, data: Buffer.from(v.data[0], 'base64') } : null;
 
-export async function solanaChain(rpcUrl: string, secret: Uint8Array): Promise<Chain & { wallet: string }> {
-  const rpc = createSolanaRpc(mainnet(rpcUrl));
+export async function solanaChain(rpcUrl: string, secret: Uint8Array, network: 'mainnet-beta' | 'devnet' = 'mainnet-beta'): Promise<Chain & { wallet: string }> {
+  const rpc = createSolanaRpc(network === 'devnet' ? devnet(rpcUrl) : mainnet(rpcUrl));
   const signer = await createKeyPairSignerFromBytes(secret);
   return {
     wallet: signer.address,

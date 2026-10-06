@@ -6,6 +6,7 @@ export const PROGRAMS = {
   ata: 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
   compute: 'ComputeBudget111111111111111111111111111111',
   jupiter: 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
+  orca: 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
 } as const;
 export const TIP_ACCOUNTS = new Set([
   '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5', 'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe', 'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
@@ -28,6 +29,8 @@ export interface PlanContext {
   /** Derived token accounts of the wallet for each mint involved (the wSOL account is always listed). */
   ata: Record<string, string>; wsol: string;
   maxPriorityLamports: number; maxTipLamports: number; unitLimitFallback?: number;
+  /** The one program allowed to perform the swap: Jupiter on mainnet, Orca on devnet. */
+  swapProgram?: string;
 }
 export type Verdict = { ok: true; priorityLamports: number; tipLamports: number } | { ok: false; reason: string };
 const no = (reason: string): Verdict => ({ ok: false, reason });
@@ -75,7 +78,8 @@ export function validatePlan(plan: SwapPlan, c: PlanContext): Verdict {
   }
 
   const sw = plan.swapInstruction;
-  if (sw.programId !== PROGRAMS.jupiter) return no('swap instruction is not the Jupiter program');
+  const swapProgram = c.swapProgram ?? PROGRAMS.jupiter;
+  if (sw.programId !== swapProgram) return no(`swap instruction is not the expected program (${swapProgram === PROGRAMS.jupiter ? 'Jupiter' : 'Orca'})`);
   if (sw.accounts.some(x => x.isSigner && x.pubkey !== c.wallet)) return no('swap needs a signature from someone else');
   const keys = new Set(sw.accounts.map(x => x.pubkey));
   const src = c.inMint === 'So11111111111111111111111111111111111111112' ? c.wsol : c.ata[c.inMint];

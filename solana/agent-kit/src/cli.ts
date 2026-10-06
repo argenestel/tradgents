@@ -53,12 +53,20 @@ async function main() {
     if (!values.name || !values.strategy) throw new Error('register needs --name and --strategy');
     const wallet = (await ask({ cmd: 'status' }) as { wallet: string }).wallet, runtime = values.runtime ?? 'custom', slug = values.slug ?? slugify(values.name);
     const reg = await api<{ challenge?: { id: string; expiresAt: number }; error?: string }>('/v1/agents/register', { slug, wallet, name: values.name, bio: values.bio ?? values.strategy, runtime, strategyLabel: values.strategy, protocols: [], startCapitalUsd: 0 });
-    if (reg.status !== 201 || !reg.body.challenge) throw new Error(`Registration failed (${reg.status}): ${reg.body.error ?? 'unknown error'}`);
-    const message = `tradgents:register:${reg.body.challenge.id}:${reg.body.challenge.expiresAt}`;
-    const proof = await ask({ cmd: 'sign-claim', message }) as { signature: string };
-    const claim = await api<{ verification?: string; error?: string }>(`/v1/agents/${slug}/claim`, { message, signature: proof.signature });
-    if (claim.status !== 200) throw new Error(`Wallet proof failed (${claim.status}): ${claim.body.error}`);
-    const result: Record<string, unknown> = { slug, wallet, verification: claim.body.verification, note: 'Your record starts now: the wallet balances at this moment are the opening position.' };
+    let verification: string | undefined;
+    if (reg.status === 409) { // already registered by an earlier run (for example one that stopped before the bond): carry on from there
+      const existing = (await api<{ agent: { slug: string; wallet: string; verification: string } }[]>('/v1/leaderboard')).body.find(r => r.agent.wallet === wallet)?.agent;
+      if (!existing) throw new Error(`Registration failed (409): ${reg.body.error ?? 'that name or wallet is taken'}`);
+      verification = existing.verification;
+    } else {
+      if (reg.status !== 201 || !reg.body.challenge) throw new Error(`Registration failed (${reg.status}): ${reg.body.error ?? 'unknown error'}`);
+      const message = `tradgents:register:${reg.body.challenge.id}:${reg.body.challenge.expiresAt}`;
+      const proof = await ask({ cmd: 'sign-claim', message }) as { signature: string };
+      const claim = await api<{ verification?: string; error?: string }>(`/v1/agents/${slug}/claim`, { message, signature: proof.signature });
+      if (claim.status !== 200) throw new Error(`Wallet proof failed (${claim.status}): ${claim.body.error}`);
+      verification = claim.body.verification;
+    }
+    const result: Record<string, unknown> = { slug, wallet, verification, note: 'Your record starts now: the wallet balances at this moment are the opening position.' };
     if (values.bond !== undefined && num(values.bond, 'bond') > 0) result.onchain = await ask({ cmd: 'register-onchain', slug, name: values.name, strategy: values.strategy, runtime, bondSol: num(values.bond, 'bond') });
     return out(result);
   }

@@ -37,7 +37,7 @@ export class Signer {
 
   async handle(raw: Req): Promise<Res> {
     try { return { ok: true, result: await this.dispatch(raw) }; }
-    catch (e) { return { ok: false, error: e instanceof z.ZodError ? 'Invalid request' : (e as Error).message }; }
+    catch (e) { return { ok: false, error: e instanceof z.ZodError ? 'Invalid request' : (e as Error).message + (process.env.TRADGENTS_DEBUG ? `\n${(e as Error).stack}` : '') }; }
   }
   private paused() { return fs.existsSync(pausePath(this.d.policy)); }
   private async dispatch(raw: Req): Promise<unknown> {
@@ -131,7 +131,7 @@ export class Signer {
     if (outUsd < floor) throw new Error(`The quote returns about $${outUsd.toFixed(2)} for $${usd.toFixed(2)} of input, worse than the market allows; refusing`);
 
     const plan = await this.d.jup.plan(quote, wallet, dst, p.maxPriorityLamports);
-    const ctx: PlanContext = { wallet, inMint, outMint, amountIn: amount, ata, wsol, maxPriorityLamports: p.maxPriorityLamports, maxTipLamports: p.maxTipLamports };
+    const ctx: PlanContext = { wallet, inMint, outMint, amountIn: amount, ata, wsol, maxPriorityLamports: p.maxPriorityLamports, maxTipLamports: p.maxTipLamports, swapProgram: p.network === 'devnet' ? PROGRAMS.orca : PROGRAMS.jupiter };
     const verdict = validatePlan(plan, ctx);
     if (!verdict.ok) throw new Error(`Refusing to sign: ${verdict.reason}`);
     await this.assertNoForeignTokenAccounts(plan.swapInstruction, new Set([src, dst, wsol]));
@@ -162,7 +162,7 @@ export class Signer {
       else this.d.spend.mark(id, 'sent', { signature: built.signature, note: 'unconfirmed: check the explorer before retrying' });
       throw e;
     }
-    return { ...summary, executed: true, signature: built.signature, explorer: `https://solscan.io/tx/${built.signature}` };
+    return { ...summary, executed: true, signature: built.signature, explorer: `https://solscan.io/tx/${built.signature}${p.network === "devnet" ? "?cluster=devnet" : ""}` };
   }
 
   private checkQuote(q: Quote, e: { inMint: string; outMint: string; amount: bigint; slippageBps: number }) {
@@ -197,7 +197,7 @@ export class Signer {
 
   /** SOL held as wSOL counts as SOL: wrapping moves it between the two, and a hostile route could spend a pre-existing wSOL balance. */
   private checkSimulation(s: { inMint: string; outMint: string; amount: bigint; minOut: bigint; pre: (AcctInfo | null)[]; post: (AcctInfo | null)[]; priority: number; tip: number }) {
-    const bal = (a: AcctInfo | null) => (a ? a.data.readBigUInt64LE(64) : 0n);
+    const bal = (a: AcctInfo | null) => (a && a.data.length >= 72 ? a.data.readBigUInt64LE(64) : 0n); // a closed or missing account holds nothing
     const [wPre, sPre, dPre, wsPre] = s.pre, [wPost, sPost, dPost, wsPost] = s.post;
     const slack = 2n * 2_039_280n + 10_000n + BigInt(s.priority) + BigInt(s.tip);
     if (!wPost || !wPre) throw new Error('Simulation did not return the wallet');
