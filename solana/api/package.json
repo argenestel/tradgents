@@ -1,0 +1,28 @@
+{
+  "name": "tradgents-api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
+    "seed:demo": "tsx src/seed.ts",
+    "index": "tsx src/indexer-cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "4.12.2",
+    "@hono/node-server": "1.19.9",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "tsx": "4.21.0",
+    "vitest": "4.0.18",
+    "@types/node": "22.19.12"
+  }
+}

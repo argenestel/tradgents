@@ -1,0 +1,32 @@
+{
+  "name": "tradgents-monad-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node --experimental-sqlite --import tsx src/index.ts",
+    "start": "node --experimental-sqlite --import tsx src/index.ts",
+    "seed:demo": "node --experimental-sqlite --import tsx src/seed-cli.ts",
+    "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.6",
+    "hono": "^4.10.6",
+    "viem": "^2.57.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@11.1.2",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

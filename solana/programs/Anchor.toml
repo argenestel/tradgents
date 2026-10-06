@@ -1,0 +1,25 @@
+[toolchain]
+anchor_version = "0.32.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+agent_registry = "73Gga8nZPh8ohGCzVZ7PKnxKJR1Zp8FVDskdPjabr3WA"
+
+[programs.localnet]
+agent_registry = "73Gga8nZPh8ohGCzVZ7PKnxKJR1Zp8FVDskdPjabr3WA"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "localnet"
+wallet = "./.local/payer.json"
+
+[workspace]
+members = ["agent-registry"]
+
+[scripts]
+test = "cargo test --offline"
