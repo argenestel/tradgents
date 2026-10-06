@@ -27,12 +27,14 @@ export class SpendLedger {
   private append(e: SpendEntry) { fs.appendFileSync(this.file, JSON.stringify(e) + '\n'); fs.fsyncSync(fs.openSync(this.file, 'r')); }
   /** Latest state per id, so a later `failed` line cancels an earlier `reserved` one. */
   private latest(): SpendEntry[] { const m = new Map<string, SpendEntry>(); for (const e of this.read()) m.set(e.id, { ...m.get(e.id), ...e }); return [...m.values()]; }
+  tradesLast24h(): number { const since = this.now() - DAY; return this.latest().filter(e => e.status !== 'failed' && e.ts > since).length; }
   spentLast24h(): number { const since = this.now() - DAY; return this.latest().filter(e => e.status !== 'failed' && e.ts > since).reduce((s, e) => s + e.micro, 0) / 1e6; }
   /** Serialized so two concurrent intents cannot both pass the check. */
-  reserve(id: string, usd: number, limit: number): Promise<{ ok: true } | { ok: false; spent: number }> {
+  reserve(id: string, usd: number, limit: number, maxTrades = Infinity): Promise<{ ok: true } | { ok: false; spent: number; reason: 'usd' | 'count' }> {
     const run = this.chain.then(() => {
       const micro = Math.ceil(usd * 1e6), spent = this.spentLast24h();
-      if (Math.round(spent * 1e6) + micro > Math.floor(limit * 1e6)) return { ok: false as const, spent };
+      if (this.tradesLast24h() >= maxTrades) return { ok: false as const, spent, reason: 'count' as const };
+      if (Math.round(spent * 1e6) + micro > Math.floor(limit * 1e6)) return { ok: false as const, spent, reason: 'usd' as const };
       this.append({ id, ts: this.now(), micro, status: 'reserved' });
       return { ok: true as const };
     });

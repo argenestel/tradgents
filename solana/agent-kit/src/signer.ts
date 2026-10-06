@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { address, getAddressEncoder, getProgramDerivedAddress } from '@solana/kit';
 import { z } from 'zod';
 import { deriveAta } from './ata';
-import type { AcctInfo, Chain } from './chain';
+import { NotSent, type AcctInfo, type Chain } from './chain';
 import type { JupiterApi, PriceApi, Quote } from './jupiter';
 import { pausePath, STABLE_MINTS, WSOL, type Policy } from './policy';
 import type { SpendLedger } from './spend';
@@ -80,6 +80,7 @@ export class Signer {
     const [info] = await this.d.chain.accounts([mint]);
     if (!info) throw new Error(`Mint ${mint} does not exist`);
     if (info.owner !== PROGRAMS.token && info.owner !== PROGRAMS.token2022) throw new Error('Not a token mint');
+    if (info.owner === PROGRAMS.token2022 && info.data.length !== 82) throw new Error('Token-2022 mints with extensions (transfer hooks, fees, delegates) are not supported');
     const decimals = info.data[44];
     this.extraDecimals.set(mint, decimals);
     return { program: info.owner, decimals };
@@ -117,7 +118,7 @@ export class Signer {
 
     const ata: Record<string, string> = { [inMint]: await this.ataOf(wallet, inMint, inInfo.program), [outMint]: await this.ataOf(wallet, outMint, outInfo.program), [WSOL]: await this.ataOf(wallet, WSOL) };
     const wsol = ata[WSOL], src = inMint === WSOL ? wsol : ata[inMint], dst = outMint === WSOL ? wsol : ata[outMint];
-    const [wInfo, srcInfo, dstInfo] = await chain.accounts([wallet, src, dst]);
+    const [wInfo, srcInfo, dstInfo, wsolInfo] = await chain.accounts([wallet, src, dst, wsol]);
     const lamports = wInfo?.lamports ?? 0n;
     if (inMint === WSOL) { if (lamports - amount < BigInt(p.solReserveLamports)) throw new Error(`That would leave less than ${formatUnits(BigInt(p.solReserveLamports), 9)} SOL for fees`); }
     else if (!srcInfo || srcInfo.data.readBigUInt64LE(64) < amount) throw new Error('Not enough of the input token');
@@ -137,25 +138,28 @@ export class Signer {
 
     const ixs: JupIx[] = [...plan.computeBudgetInstructions, ...plan.setupInstructions, plan.swapInstruction, ...(plan.cleanupInstruction ? [plan.cleanupInstruction] : []), ...plan.otherInstructions];
     const built = await chain.buildSigned(ixs, plan.addressLookupTableAddresses);
-    const sim = await chain.simulate(built.wire, [wallet, src, dst]);
+    const sim = await chain.simulate(built.wire, [wallet, src, dst, wsol]);
     if (sim.err) throw new Error(`Simulation failed: ${JSON.stringify(sim.err)}`);
-    this.checkSimulation({ inMint, outMint, amount, minOut: BigInt(quote.otherAmountThreshold), pre: [wInfo, srcInfo, dstInfo], post: sim.accounts, priority: verdict.priorityLamports, tip: verdict.tipLamports });
+    this.checkRoute(sim.logs);
+    this.checkSimulation({ inMint, outMint, amount, minOut: BigInt(quote.otherAmountThreshold), pre: [wInfo, srcInfo, dstInfo, wsolInfo], post: sim.accounts, priority: verdict.priorityLamports, tip: verdict.tipLamports });
 
     const summary = { in: `${a.amount} ${p.allowedMints[inMint]}`, estimatedOut: `${formatUnits(BigInt(quote.outAmount), outInfo.decimals)} ${p.allowedMints[outMint]}`,
       minimumOut: `${formatUnits(BigInt(quote.otherAmountThreshold), outInfo.decimals)} ${p.allowedMints[outMint]}`, valueUsd: Number(usd.toFixed(2)), slippageBps,
       priceImpactPct: quote.priceImpactPct, priorityFeeLamports: verdict.priorityLamports, simulated: true };
     if (!execute) return { ...summary, executed: false };
 
-    const id = randomUUID(), reserved = await this.d.spend.reserve(id, usd, p.maxDailyUsd);
-    if (!reserved.ok) throw new Error(`Daily limit: $${reserved.spent.toFixed(2)} already used of $${p.maxDailyUsd} in the last 24 hours`);
+    // Fees count against the day too: reserve the trade plus the most it can cost in network fees and tips.
+    const feeUsd = (verdict.priorityLamports + verdict.tipLamports + 10_000) / 1e9 * (px.get(WSOL)?.usd ?? 0), id = randomUUID();
+    const reserved = await this.d.spend.reserve(id, usd + feeUsd, p.maxDailyUsd, p.maxTradesPerDay);
+    if (!reserved.ok) throw new Error(reserved.reason === 'count' ? `Trade-count limit: ${p.maxTradesPerDay} trades already in the last 24 hours` : `Daily limit: $${reserved.spent.toFixed(2)} already used of $${p.maxDailyUsd} in the last 24 hours`);
     try {
       await chain.send(built.wire, built.signature);
       this.d.spend.mark(id, 'sent', { signature: built.signature });
     } catch (e) {
-      // A send error does not prove the transaction did not land, so the spend stays reserved unless it clearly never reached the network.
+      // Only a proven non-landing frees the budget. Anything ambiguous (timeouts, transport errors) stays charged.
       const msg = (e as Error).message;
-      if (/not confirmed in time/.test(msg)) this.d.spend.mark(id, 'sent', { signature: built.signature, note: 'unconfirmed' });
-      else this.d.spend.mark(id, 'failed', { note: msg.slice(0, 200) });
+      if (e instanceof NotSent || /failed on chain/.test(msg)) this.d.spend.mark(id, 'failed', { note: msg.slice(0, 200) });
+      else this.d.spend.mark(id, 'sent', { signature: built.signature, note: 'unconfirmed: check the explorer before retrying' });
       throw e;
     }
     return { ...summary, executed: true, signature: built.signature, explorer: `https://solscan.io/tx/${built.signature}` };
@@ -183,19 +187,29 @@ export class Signer {
     }
   }
 
+  /** Every program the simulation ran must be known, if the owner pinned a route list. */
+  private checkRoute(logs: string[]) {
+    const allowed = this.d.policy.routePrograms;
+    if (!allowed) return;
+    const ok = new Set<string>([...Object.values(PROGRAMS), ...allowed]);
+    for (const l of logs) { const m = /^Program (\S+) invoke \[\d+\]$/.exec(l); if (m && !ok.has(m[1])) throw new Error(`Refusing to sign: the route calls ${m[1]}, which is not on the signer's route list`); }
+  }
+
+  /** SOL held as wSOL counts as SOL: wrapping moves it between the two, and a hostile route could spend a pre-existing wSOL balance. */
   private checkSimulation(s: { inMint: string; outMint: string; amount: bigint; minOut: bigint; pre: (AcctInfo | null)[]; post: (AcctInfo | null)[]; priority: number; tip: number }) {
     const bal = (a: AcctInfo | null) => (a ? a.data.readBigUInt64LE(64) : 0n);
-    const [wPre, sPre, dPre] = s.pre, [wPost, sPost, dPost] = s.post;
-    const rentSlack = 2n * 2_039_280n + 10_000n + BigInt(s.priority) + BigInt(s.tip);
+    const [wPre, sPre, dPre, wsPre] = s.pre, [wPost, sPost, dPost, wsPost] = s.post;
+    const slack = 2n * 2_039_280n + 10_000n + BigInt(s.priority) + BigInt(s.tip);
     if (!wPost || !wPre) throw new Error('Simulation did not return the wallet');
+    const solPre = wPre.lamports + bal(wsPre), solPost = wPost.lamports + bal(wsPost);
     if (s.inMint === WSOL) {
-      if (wPre.lamports - wPost.lamports > s.amount + rentSlack) throw new Error('Simulation shows more SOL leaving the wallet than the trade amount');
+      if (solPre - solPost > s.amount + slack) throw new Error('Simulation shows more SOL leaving the wallet than the trade amount');
     } else {
       if (bal(sPre) - bal(sPost) > s.amount) throw new Error('Simulation shows more of the input token leaving than the trade amount');
-      if (wPre.lamports - wPost.lamports > rentSlack) throw new Error('Simulation shows SOL leaving the wallet beyond fees and rent');
+      if (s.outMint !== WSOL && solPre - solPost > slack) throw new Error('Simulation shows SOL leaving the wallet beyond fees and rent');
     }
     if (s.outMint === WSOL) {
-      if (wPost.lamports - wPre.lamports + rentSlack < s.minOut) throw new Error('Simulation shows less SOL arriving than the quote guarantees');
+      if (solPost - solPre + slack < s.minOut) throw new Error('Simulation shows less SOL arriving than the quote guarantees');
     } else if (bal(dPost) - bal(dPre) < s.minOut) throw new Error('Simulation shows less output than the quote guarantees');
   }
 
@@ -215,10 +229,18 @@ export class Signer {
       { pubkey: config, isSigner: false, isWritable: false }, { pubkey: agent, isSigner: false, isWritable: true }, { pubkey: vault, isSigner: false, isWritable: true },
       { pubkey: PROGRAMS.system, isSigner: false, isWritable: false }] };
     if (this.paused()) throw new Error('Trading is paused');
+    // A bond is money leaving the wallet: it counts against the same per-trade and daily limits.
+    const sol = (await this.d.prices.usd([WSOL])).get(WSOL);
+    if (!sol) throw new Error('No reliable SOL price; refusing to post a bond');
+    const bondUsd = a.bondSol * sol.usd;
+    if (bondUsd > p.maxTradeUsd) throw new Error(`The bond is worth about $${bondUsd.toFixed(2)}, above the per-trade limit of $${p.maxTradeUsd}`);
+    const bondId = randomUUID(), held = await this.d.spend.reserve(bondId, bondUsd, p.maxDailyUsd, p.maxTradesPerDay);
+    if (!held.ok) throw new Error('The bond does not fit in today\'s limits');
     const built = await chain.buildSigned([ix], []);
     const sim = await chain.simulate(built.wire, [wallet]);
-    if (sim.err) throw new Error(`Simulation failed: ${JSON.stringify(sim.err)}`);
-    await chain.send(built.wire, built.signature);
+    if (sim.err) { this.d.spend.mark(bondId, 'failed', { note: 'simulation failed' }); throw new Error(`Simulation failed: ${JSON.stringify(sim.err)}`); }
+    try { await chain.send(built.wire, built.signature); this.d.spend.mark(bondId, 'sent', { signature: built.signature }); }
+    catch (e) { if (e instanceof NotSent) this.d.spend.mark(bondId, 'failed', { note: 'not sent' }); else this.d.spend.mark(bondId, 'sent', { signature: built.signature, note: 'unconfirmed' }); throw e; }
     return { signature: built.signature, bondSol: a.bondSol };
   }
 }

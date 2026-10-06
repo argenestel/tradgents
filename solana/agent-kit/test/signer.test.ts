@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { deriveAta } from '../src/ata';
-import type { AcctInfo, Chain } from '../src/chain';
+import { NotSent, type AcctInfo, type Chain } from '../src/chain';
 import { listen, request } from '../src/ipc';
 import type { JupiterApi, PriceApi, Quote } from '../src/jupiter';
 import { loadPolicy, policySchema, USDC, USDT, WSOL, type Policy } from '../src/policy';
@@ -69,7 +69,7 @@ describe('swap', () => {
   });
   it('swap sends once, reserves the USD value, and reports the signature', async () => {
     const r = await swap() as { ok: true; result: Record<string, unknown> };
-    expect(r.result).toMatchObject({ executed: true, signature: 'SIG0' }); expect(state.sent).toEqual(['SIG0']); expect(spend.spentLast24h()).toBeCloseTo(12, 6);
+    expect(r.result).toMatchObject({ executed: true, signature: 'SIG0' }); expect(state.sent).toEqual(['SIG0']); expect(spend.spentLast24h()).toBeCloseTo(12.0036, 4);
   });
   it('enforces the per-trade limit, the daily limit (rolling 24h) and frees it a day later', async () => {
     await fail(swap({ amount: '0.2' }), /per-trade limit/);
@@ -81,8 +81,10 @@ describe('swap', () => {
     const c = chain(); c.send = async () => { throw new Error('Transaction failed on chain: {}'); };
     signer = new Signer({ policy, secret, chain: c, wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
     await fail(swap(), /failed on chain/); expect(spend.spentLast24h()).toBe(0);
-    c.send = async () => { throw new Error('Transaction X was not confirmed in time'); };
-    await fail(swap(), /not confirmed/); expect(spend.spentLast24h()).toBeCloseTo(12, 6);
+    c.send = async () => { throw new NotSent('Rejected before sending: preflight'); };
+    await fail(swap(), /Rejected/); expect(spend.spentLast24h()).toBe(0);
+    c.send = async () => { throw new Error('socket hang up'); }; // ambiguous: it may have landed
+    await fail(swap(), /socket hang up/); expect(spend.spentLast24h()).toBeCloseTo(12.0036, 4);
   });
   it('refuses tokens outside the allowlist, same-token swaps, and too much slippage', async () => {
     await fail(swap({ out: 'BONK' }), /allowed token list/); await fail(swap({ out: 'SOL' }), /same token/); await fail(swap({ slippageBps: 101 }), /above the limit/);
@@ -124,6 +126,45 @@ describe('swap', () => {
   });
   it('stops everything when the PAUSE file exists', async () => {
     fs.writeFileSync(path.join(dir, 'PAUSE'), ''); await fail(swap(), /paused/); expect(state.sent).toEqual([]);
+  });
+});
+
+describe('hardening from review', () => {
+  it('counts wrapped SOL: a route that spends a pre-existing wSOL balance is refused', async () => {
+    // the wallet holds 1 SOL as wSOL; the simulated route consumes it while native SOL looks normal
+    const c = chain(); const orig = c.accounts;
+    c.accounts = async addrs => (await orig(addrs)).map((a, i) => addrs[i] === wsolAta ? tokenAcct(W, 1_000_000_000n) : a);
+    c.simulate = async () => ({ err: null, logs: [], accounts: [{ lamports: state.lamports - 100_000_000n - 20_000n, owner: PROGRAMS.system, data: Buffer.alloc(0) }, null, tokenAcct(W, state.usdc + 12_124_969n), null] });
+    signer = new Signer({ policy, secret, chain: c, wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
+    await fail(swap(), /more SOL leaving/);
+  });
+  it('rejects Token-2022 mints that carry extensions', async () => {
+    const c = chain(); const orig = c.accounts;
+    c.accounts = async addrs => (await orig(addrs)).map((a, i) => addrs[i] === USDC ? { lamports: 1n, owner: PROGRAMS.token2022, data: Buffer.alloc(200) } : a);
+    signer = new Signer({ policy, secret, chain: c, wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
+    await fail(swap(), /Token-2022 mints with extensions/);
+  });
+  it('enforces an optional route allowlist from the simulation logs', async () => {
+    const c = chain(); const sim = c.simulate;
+    c.simulate = async (w, a) => ({ ...(await sim(w, a)), logs: ['Program SomeUnknownVenue1111111111111111111111111111 invoke [2]'] });
+    const strict = policySchema.parse({ ...policy, routePrograms: ['Whirlpool11111111111111111111111111111111'] });
+    signer = new Signer({ policy: strict, secret, chain: c, wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
+    await fail(swap(), /not on the signer's route list/);
+    signer = new Signer({ policy, secret, chain: c, wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
+    expect((await swap()).ok).toBe(true);
+  });
+  it('caps the number of trades per day, since every trade pays fees', async () => {
+    policy = policySchema.parse({ ...policy, maxTradesPerDay: 2, maxDailyUsd: 1000, maxTradeUsd: 20 });
+    signer = new Signer({ policy, secret, chain: chain(), wallet: W, jup: jup(), prices: prices(), spend, now: () => clock });
+    await swap(); await swap(); await fail(swap(), /Trade-count limit/);
+  });
+  it('counts a bond against the per-trade and daily limits', async () => {
+    const args = { cmd: 'register-onchain', slug: 'a', name: 'A', strategy: 's', runtime: 'codex' };
+    await fail(signer.handle({ ...args, bondSol: 0.5 }), /above the per-trade limit/);          // 0.5 SOL = $60 > $20
+    expect((await signer.handle({ ...args, bondSol: 0.1 })).ok).toBe(true);                       // $12
+    expect(spend.spentLast24h()).toBeCloseTo(12, 6);
+    expect((await signer.handle({ ...args, bondSol: 0.1 })).ok).toBe(true);                       // $24 of $30
+    await fail(signer.handle({ ...args, bondSol: 0.1 }), /does not fit/);                         // a third would be $36
   });
 });
 

@@ -4,7 +4,7 @@ import type { Agent, AgentDetail, Call, EquityPoint, Interaction, LeaderboardRow
 type Q = Pick<Sql, 'query'>;
 const n = (v: unknown) => Number(v);
 export type Valuation = EquityPoint & { flow?: number };
-export interface Flags { unsupportedTs: number[]; unpricedTouchTs: number[]; unpricedHeld: string[]; drift: boolean }
+export interface Flags { unsupportedTs: number[]; unpricedTouchTs: number[]; unpricedHeld: string[]; drift: boolean; depegTs?: number[] }
 export type StatsRow = Pick<LeaderboardRow, 'equityUsd' | 'tier' | 'metrics' | 'spark'> & { notes: string[]; flags: Flags };
 
 /** All SQL lives here. Everything is parameterized; JSON payloads go through jsonb. */
@@ -33,7 +33,7 @@ export class Store {
       [signature, wallet, slot, blockMs, JSON.stringify(tx)])).length > 0;
   }
   async rawFor(wallet: string, afterSlot: number): Promise<{ signature: string; slot: number; data: unknown }[]> {
-    return (await this.q.query<{ signature: string; slot: string; data: unknown }>('select signature,slot,data from solana.raw_transactions where wallet=$1 and slot>$2 order by slot, signature', [wallet, afterSlot]))
+    return (await this.q.query<{ signature: string; slot: string; data: unknown }>(`select signature,slot,data from solana.raw_transactions where wallet=$1 and slot>$2 order by slot, coalesce((data->>'transactionIndex')::int, 0), signature`, [wallet, afterSlot]))
       .map(r => ({ signature: r.signature, slot: n(r.slot), data: r.data }));
   }
   async putOpening(agent: string, o: { slot: number; tsMs: number; balances: unknown; prices: unknown }) {
@@ -117,6 +117,7 @@ export class Store {
   async useChallenge(id: string) { await this.q.query('update solana.challenges set used=true where id=$1', [id]); }
   /** Returns 'replay' | 'rate' | undefined (ok, nonce consumed and quota stamped). Call inside tx. */
   async consumeWrite(wallet: string, slug: string, nonce: string, nonceExpiresMs: number, nowMs: number, minGapMs: number): Promise<'replay' | 'rate' | undefined> {
+    await this.q.query('select pg_advisory_xact_lock(hashtext($1))', ['write:' + slug]); // serializes first writes, when there is no quota row to lock yet
     await this.q.query('delete from solana.nonces where expires_ms < $1', [nowMs]);
     if ((await this.q.query('select 1 from solana.nonces where wallet=$1 and nonce=$2', [wallet, nonce])).length) return 'replay';
     const quota = (await this.q.query<{ last_ms: string }>("select last_ms from solana.quotas where principal=$1 and kind='write' for update", [slug]))[0];

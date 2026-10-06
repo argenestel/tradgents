@@ -41,6 +41,34 @@ describe('analyze', () => {
   });
 });
 
+describe('review fixes', () => {
+  it('never reads a missing cost basis as zero: selling an unpriced holding records no gain and blocks ranking', () => {
+    const c = ctx({}, { balances: { [WSOL]: { raw: String(1e9), decimals: 9 }, [BONK]: { raw: String(1_000_000e5), decimals: 5 } }, prices: { [WSOL]: 100 } }); // BONK held at opening with no price, so no lot
+    c.samples.set(BONK, [{ ts: T0, usd: 0.0001 }]);
+    const r = replay(agent, facts([{ slot: 1, time: t(1), pre: 1, post: 1 - 0.000005, tokens: [{ mint: BONK, dec: 5, pre: 1_000_000, post: 0, idx: 5 }, { mint: USDC, dec: 6, pre: 0, post: 100 }], programs: [JUP] }]), c);
+    expect(r.trades[0].pnlUsd).toBeLessThan(0.01); expect(r.trades[0].pnlUsd).toBeGreaterThan(-0.01); // not +$100 of invented profit
+    expect(r.unpricedTouches).toHaveLength(1);
+  });
+  it('replays same-slot transactions in the order the chain executed them', () => {
+    const a = tx({ slot: 5, time: t(1), pre: 2, post: 1 - 0.000005, tokens: [{ mint: USDC, dec: 6, pre: 0, post: 100 }], programs: [JUP] });
+    const b = tx({ slot: 5, time: t(1), pre: 1 - 0.000005, post: 1.5 - 0.00001, tokens: [{ mint: USDC, dec: 6, pre: 100, post: 50 }], programs: [JUP] });
+    a.transactionIndex = 2; b.transactionIndex = 7;                // 'zzz' sorts after 'aaa' by signature, so only the index can order them
+    const r = replay(agent, [analyze(W, 'zzz', a)!, analyze(W, 'aaa', b)!], ctx());
+    expect(r.trades.map(x => x.meta.pair)).toEqual(['SOL → USDC', 'USDC → SOL']);
+  });
+  it('finds a Jito tip recipient that was loaded through an address lookup table', () => {
+    const c = tx({ slot: 1, time: 1, pre: 1, post: 1 - 0.00001 - 0.000005, programs: [SYSTEM] });
+    c.meta!.loadedAddresses = { writable: ['96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'], readonly: [] };
+    c.meta!.preBalances.push(1_000_000); c.meta!.postBalances.push(1_010_000);
+    expect(analyze(W, 's', c)!.tip).toBe(10_000n);
+  });
+  it('flags, rather than guesses, a SOL price when no sample is near the transaction', () => {
+    const c = ctx(); c.samples.set(WSOL, [{ ts: T0, usd: 100 }]);
+    const r = replay(agent, facts([{ slot: 1, time: t(120), pre: 2, post: 2, err: true }]), c); // two hours later, no sample
+    expect(r.unpricedTouches).toHaveLength(1);
+  });
+});
+
 describe('replay', () => {
   it('treats the opening balance as the first flow and a deposit as a later flow', () => {
     const r = replay(agent, facts([{ slot: 1, time: t(1), pre: 2, post: 2, payer: false, tokens: [{ mint: USDC, dec: 6, pre: 0, post: 50 }], programs: [TOKEN] }]), ctx());

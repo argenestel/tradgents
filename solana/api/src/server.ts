@@ -107,16 +107,23 @@ export function createApp(store: Store, opts: AppOptions = {}) {
     return c.json({ cluster: opts.cluster ?? 'mainnet-beta', programId: opts.programId ?? '', valuation: opts.cluster === 'devnet' ? ORCA_POOL_NOTE : 'USD at Jupiter market prices, sampled every 30 seconds',
       solPriceUsd: sol?.usd ?? null, priceAt: sol?.ts ?? null, lastIndexedAt: l === null ? null : now() - l, stale: l === null || l > staleAfter, ...counts });
   });
+  /** While updates are delayed, a cached rank would read as current. Hold every agent unranked until the indexer is back. */
+  const holdIfStale = async <T extends { metrics: AgentDetail['metrics']; notes?: string[] }>(row: T): Promise<T> => {
+    const l = await lag();
+    if (l !== null && l <= staleAfter) return row;
+    const metrics = Object.fromEntries(Object.entries(row.metrics).map(([k, m]) => [k, { ...m, eligible: false }])) as T['metrics'];
+    return { ...row, metrics, notes: [...(row.notes ?? []), 'Updates are delayed, so rankings are paused'] };
+  };
   app.get('/v1/leaderboard', async c => {
     const sort = c.req.query('sort');
     if (sort && !['sharpe', 'return'].includes(sort)) return c.json({ error: 'Invalid sort' }, 400);
-    const rows: LeaderboardRow[] = await store.leaderboard();
+    const rows: LeaderboardRow[] = await Promise.all((await store.leaderboard()).map(holdIfStale));
     rows.sort((a, b) => (sort === 'return' ? b.metrics['30d'].returnPct - a.metrics['30d'].returnPct : b.metrics['7d'].sharpe - a.metrics['7d'].sharpe) || a.agent.slug.localeCompare(b.agent.slug));
     return c.json(rows);
   });
   app.get('/v1/agents/:slug', async c => {
     const agent = await store.agent(c.req.param('slug'));
-    return agent ? c.json(await load(agent)) : c.json({ error: 'Unknown agent' }, 404);
+    return agent ? c.json(await holdIfStale(await load(agent))) : c.json({ error: 'Unknown agent' }, 404);
   });
   app.get('/v1/feed', async c => {
     const filter = c.req.query('filter') ?? 'all', agent = c.req.query('agent'), limit = Number(c.req.query('limit') ?? 40);

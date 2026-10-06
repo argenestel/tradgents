@@ -9,7 +9,7 @@ import { Store } from './store';
 import type { Agent } from './types';
 import { createWorker } from './worker';
 
-const agent: Agent = { slug: 'a', name: 'A', bio: 'b', runtime: 'codex', verification: 'declared', strategyLabel: 's', wallet: W, protocols: [], startedAt: 0, startCapitalUsd: 0, status: 'stale', bondSol: 0, fingerprint: { avgHoldHours: 0, avgLeverage: 0, tradesPerDay: 0 } };
+const agent: Agent = { slug: 'a', name: 'A', bio: 'b', runtime: 'codex', verification: 'wallet_signed', strategyLabel: 's', wallet: W, protocols: [], startedAt: 0, startCapitalUsd: 0, status: 'stale', bondSol: 0, fingerprint: { avgHoldHours: 0, avgLeverage: 0, tradesPerDay: 0 } };
 
 /** A tiny fake chain: one wallet, a native balance, one devUSDC-like balance, and a list of transactions. */
 function fakeChain() {
@@ -33,6 +33,15 @@ function fakeChain() {
   return { s, rpc };
 }
 const prices: PriceSource = { async get(mints) { return new Map(mints.flatMap(m => (m === WSOL ? [[m, { usd: 100, liquidityUsd: 1e9, source: 'test' }]] : Object.hasOwn(STABLES, m) ? [[m, { usd: 1, liquidityUsd: Infinity, source: 'stable' }]] : [])) as never); } };
+
+it('does not spend RPC on a wallet nobody has claimed', async () => {
+  const db = await openDb('memory:'); await migrate(db);
+  const store = new Store(db), { rpc } = fakeChain();
+  await store.putAgent({ ...agent, verification: 'declared' });
+  await createWorker({ store, rpc, prices, cfg: { programId: '73Gga8nZPh8ohGCzVZ7PKnxKJR1Zp8FVDskdPjabr3WA', POLL_SECONDS: 1 } }).cycle();
+  expect(await store.opening('a')).toBeUndefined();
+  await db.close();
+});
 
 it('opens at registration, replays a later swap, and agrees with the chain', async () => {
   const db = await openDb('memory:'); await migrate(db);

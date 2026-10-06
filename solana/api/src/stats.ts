@@ -46,6 +46,8 @@ export function blockers(flags: Flags, window: WindowKey, now: number): string[]
   const p = flags.unpricedTouchTs.filter(t => t >= start).length;
   if (p) why.push(`${p} trade${p === 1 ? '' : 's'} in tokens with no market price`);
   if (flags.unpricedHeld.length) why.push(`Holds ${flags.unpricedHeld.length} token${flags.unpricedHeld.length === 1 ? '' : 's'} with no market price`);
+  const d = (flags.depegTs ?? []).filter(t => t >= start).length;
+  if (d) why.push('A major stablecoin traded away from $1 during this window, so dollar values are uncertain');
   if (flags.drift) why.push('Our ledger did not match the chain; it is being re-checked');
   return why;
 }

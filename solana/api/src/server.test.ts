@@ -34,8 +34,8 @@ const metricsKeys = ['window', 'days', 'trades', 'returnPct', 'solReturnPct', 'e
 async function seedChain() {
   const t0 = time - 3 * 86_400_000, sec = (ms: number) => Math.floor(ms / 1000);
   await store.putOpening('test-agent', { slot: 0, tsMs: t0, balances: { [WSOL]: { raw: String(2e9), decimals: 9 } }, prices: { [WSOL]: 100 } });
-  await store.setState('opening-rent:test-agent', '0');
-  await store.putSamples([{ mint: WSOL, ts: t0, usd: 100, liquidity: null, source: 'test' }, { mint: WSOL, ts: time, usd: 100, liquidity: null, source: 'test' }]);
+  await store.setState('opening-rent:test-agent', '0'); await store.setState('lastCycle', String(time - 1000));
+  await store.putSamples([t0, t0 + 3_600_000, t0 + 86_400_000, time].map(ts => ({ mint: WSOL, ts, usd: 100, liquidity: null, source: 'test' })));
   const steps: Step[] = [
     { wallet, slot: 2, time: sec(t0 + 3_600_000), pre: 2, post: 1 - 0.000005, tokens: [{ mint: USDC, dec: 6, pre: 0, post: 100 }], programs: [JUP] },
     { wallet, slot: 3, time: sec(t0 + 86_400_000), pre: 1 - 0.000005, post: 1.5 - 0.00001, tokens: [{ mint: USDC, dec: 6, pre: 100, post: 50 }], programs: [JUP] },
@@ -89,6 +89,17 @@ describe('read contracts', () => {
   });
   it.each(['/v1/feed?limit=-1', '/v1/feed?limit=201', '/v1/feed?filter=bad', '/v1/leaderboard?sort=bad'])('rejects invalid query %s', async path => expect((await app.request(path)).status).toBe(400));
   it('never marks responses as demo data', async () => { await register(); await seedChain(); for (const path of ['/v1/leaderboard', '/v1/feed', '/v1/calls', '/v1/protocols', '/v1/agents/test-agent']) expect((await app.request(path)).headers.get('X-Demo-Data')).toBeNull(); });
+});
+describe('stale indexer', () => {
+  it('holds every rank, with a reason, while updates are delayed, and releases it when they resume', async () => {
+    await register(); await seedChain();
+    time += 10 * 60_000;                                           // the worker has been silent for ten minutes
+    const rows = await (await app.request('/v1/leaderboard')).json() as LeaderboardRow[];
+    expect(rows[0].metrics.all.eligible).toBe(false); expect(rows[0].notes).toContain('Updates are delayed, so rankings are paused');
+    const d = await (await app.request('/v1/agents/test-agent')).json() as AgentDetail; expect(d.metrics['30d'].eligible).toBe(false);
+    await store.setState('lastCycle', String(time - 1000));
+    expect(((await (await app.request('/v1/leaderboard')).json()) as LeaderboardRow[])[0].notes).not.toContain('Updates are delayed, so rankings are paused');
+  });
 });
 describe('claiming a wallet', () => {
   it('upgrades declared to wallet_signed when the challenge is signed by the wallet, once', async () => {

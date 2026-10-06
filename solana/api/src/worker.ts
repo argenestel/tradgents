@@ -12,7 +12,7 @@ import type { Agent } from './types';
 /** Bump when ledger math changes so stored trades and equity are re-derived from raw transactions. */
 export const REPLAY_VERSION = '4';
 export const WORKER_LOCK = 7_261_002;
-const SAMPLE_EVERY_MS = 30_000, MARK_EVERY_MS = 300_000, STALE_PRICE_MS = 10 * 60_000;
+const DEPEG_BAND = 0.015, SAMPLE_EVERY_MS = 30_000, MARK_EVERY_MS = 300_000, STALE_PRICE_MS = 10 * 60_000;
 
 type SigInfo = { signature: string; slot: number; err: unknown; blockTime: number | null };
 export interface Chain { slot: number; balances: Map<string, bigint>; decimals: Map<string, number>; tokenAccounts: number }
@@ -126,7 +126,6 @@ export async function projectRegistry(store: Store): Promise<number> {
 export interface WorkerDeps { store: Store; rpc: Rpc; prices: PriceSource; cfg: Pick<Config, 'programId' | 'POLL_SECONDS'>; now?: () => number }
 export function createWorker(d: WorkerDeps) {
   const now = d.now ?? Date.now, registry = new Indexer(d.store, d.rpc, d.cfg.programId);
-  const driftSeen = new Map<string, number>();
 
   /** Sample SOL and everything agents hold, at most every SAMPLE_EVERY_MS. Replays read these samples, never a live price. */
   async function sample(): Promise<void> {
@@ -136,6 +135,8 @@ export function createWorker(d: WorkerDeps) {
     for (const a of await d.store.agents()) for (const m of JSON.parse(await d.store.state(`held:${a.slug}`) ?? '[]') as string[]) held.add(m);
     const q = await d.prices.get([...held]);
     if (!q.has(WSOL)) throw new Error('No SOL price: refusing to mark anything this cycle');
+    const dev = await d.prices.stableDeviation?.().catch(() => undefined);
+    if (dev !== undefined && dev > DEPEG_BAND) { const prior = JSON.parse(await d.store.state('depeg-times') ?? '[]') as number[]; await d.store.setState('depeg-times', JSON.stringify([...prior.filter(t => t > now() - 35 * 86_400_000), now()])); log.warn({ deviation: dev }, 'stablecoin off its peg'); }
     await d.store.putSamples([...q].map(([mint, p]) => ({ mint, ts: now(), usd: p.usd, liquidity: Number.isFinite(p.liquidityUsd) ? p.liquidityUsd : null, source: p.source })));
     await d.store.setState('sampled', String(now()));
   }
@@ -156,10 +157,11 @@ export function createWorker(d: WorkerDeps) {
     const tip = await d.rpc.call<SigInfo[]>('getSignaturesForAddress', [agent.wallet, { commitment: 'finalized', limit: 1 }]);
     if (!tip.length || tip[0].signature === await d.store.state(`wallet-head:${agent.slug}`)) { // nothing newer than what we replayed
       const diff = [...new Set([...chain.balances.keys(), ...built.balances.keys()])].filter(m => (chain.balances.get(m) ?? 0n) !== (built.balances.get(m) ?? 0n));
-      if (diff.length) { driftSeen.set(agent.slug, (driftSeen.get(agent.slug) ?? 0) + 1); log.warn({ agent: agent.slug, mints: diff.map(m => m.slice(0, 6)) }, 'ledger differs from chain'); }
-      else driftSeen.delete(agent.slug);
+      if (diff.length) { await d.store.setState(`drift:${agent.slug}`, '1'); log.warn({ agent: agent.slug, mints: diff.map(m => m.slice(0, 6)) }, 'ledger differs from chain'); }
+      else await d.store.setState(`drift:${agent.slug}`, '0');
     }
-    built.flags.drift = (driftSeen.get(agent.slug) ?? 0) >= 2;
+    built.flags.drift = (await d.store.state(`drift:${agent.slug}`)) === '1'; // persisted: a restart does not make a mismatch look fine
+    built.flags.depegTs = JSON.parse(await d.store.state('depeg-times') ?? '[]') as number[];
     const solSamples = await d.store.latestSample(WSOL);
     if (!solSamples || t - solSamples.ts > STALE_PRICE_MS) throw new Error('SOL price is stale; not marking');
     const px = async (m: string) => { if (Object.hasOwn(STABLES, m)) return 1; const s = await d.store.latestSample(m); return s && t - s.ts <= STALE_PRICE_MS ? s.usd : undefined; };
@@ -174,17 +176,19 @@ export function createWorker(d: WorkerDeps) {
     if (added) log.info({ agent: agent.slug, added }, 'indexed new transactions');
   }
 
-  async function cycle(): Promise<void> {
+  async function cycle(lost?: AbortSignal): Promise<void> {
     await sample();
     try { await registry.poll(); await projectRegistry(d.store); } catch (e) { log.error({ err: (e as Error).message }, 'registry poll failed'); }
     for (const agent of await d.store.agents()) {
+      if (lost?.aborted) throw new Error('stopping: the worker was asked to stop or lost its lock');
+      if (agent.verification === 'declared') continue; // not claimed yet: nobody has proven the wallet, so do not spend RPC on it
       try { await agentCycle(agent); } catch (e) { log.error({ agent: agent.slug, err: (e as Error).message }, 'agent cycle failed; will retry'); }
     }
     await d.store.setState('lastCycle', String(now()));
   }
   async function run(signal: AbortSignal) {
     while (!signal.aborted) {
-      try { await cycle(); } catch (e) { log.error({ err: (e as Error).message }, 'worker cycle failed'); }
+      try { await cycle(signal); } catch (e) { log.error({ err: (e as Error).message }, 'worker cycle failed'); }
       try { await sleep(d.cfg.POLL_SECONDS * 1000, undefined, { signal }); } catch { /* aborted */ }
     }
   }

@@ -1,7 +1,11 @@
 import { STABLES, WSOL } from './config';
 
 export interface PriceQuote { usd: number; liquidityUsd: number; source: string }
-export interface PriceSource { get(mints: string[]): Promise<Map<string, PriceQuote>> }
+export interface PriceSource {
+  get(mints: string[]): Promise<Map<string, PriceQuote>>;
+  /** Largest distance of a stablecoin from $1, as a fraction, when the source can tell. */
+  stableDeviation?(): Promise<number | undefined>;
+}
 
 export const isStable = (mint: string) => Object.hasOwn(STABLES, mint);
 
@@ -10,6 +14,15 @@ export const isStable = (mint: string) => Object.hasOwn(STABLES, mint);
  * `minLiquidityUsd` is left out on purpose: a price you cannot exit at is not a price.
  */
 export class JupiterPrices implements PriceSource {
+  async stableDeviation(): Promise<number | undefined> {
+    const base = this.opts.baseUrl ?? (this.opts.apiKey ? 'https://api.jup.ag/price/v3' : 'https://lite-api.jup.ag/price/v3');
+    const ids = Object.keys(STABLES).filter(m => STABLES[m] === 'USDC' || STABLES[m] === 'USDT');
+    const res = await (this.opts.fetcher ?? fetch)(`${base}?ids=${ids.join(',')}`, { headers: this.opts.apiKey ? { 'x-api-key': this.opts.apiKey } : {}, signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return undefined;
+    const body = await res.json() as Record<string, { usdPrice?: number } | null>;
+    const devs = ids.flatMap(i => (body[i]?.usdPrice ? [Math.abs(body[i]!.usdPrice! - 1)] : []));
+    return devs.length ? Math.max(...devs) : undefined;
+  }
   constructor(private readonly opts: { baseUrl?: string; apiKey?: string; minLiquidityUsd: number; fetcher?: typeof fetch }) {}
   async get(mints: string[]): Promise<Map<string, PriceQuote>> {
     const out = new Map<string, PriceQuote>();
@@ -42,11 +55,12 @@ export class FixedPrices implements PriceSource {
 }
 
 /** Nearest sample in time wins; samples are stored by the worker, so replays are deterministic. */
-export function nearestSample(samples: { ts: number; usd: number }[], ts: number): number | undefined {
+export function nearestSample(samples: { ts: number; usd: number }[], ts: number, maxGapMs = Infinity): number | undefined {
   if (!samples.length) return undefined;
   let lo = 0, hi = samples.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (samples[mid].ts < ts) lo = mid + 1; else hi = mid; }
   const a = samples[lo], b = samples[lo - 1];
-  return b && Math.abs(b.ts - ts) <= Math.abs(a.ts - ts) ? b.usd : a.usd;
+  const best = b && Math.abs(b.ts - ts) <= Math.abs(a.ts - ts) ? b : a;
+  return Math.abs(best.ts - ts) <= maxGapMs ? best.usd : undefined;
 }
 export { WSOL };

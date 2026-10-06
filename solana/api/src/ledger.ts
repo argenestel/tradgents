@@ -6,16 +6,19 @@ import type { Agent, Interaction, PnlComponent, Post, ProtocolId } from './types
 export interface TokenBalance { accountIndex: number; mint: string; owner?: string; uiTokenAmount: { amount: string; decimals: number } }
 export interface ChainTx {
   slot: number;
+  /** Position of the transaction inside its block; orders same-slot transactions the way the chain executed them. */
+  transactionIndex?: number;
   blockTime: number | null;
   transaction: { message: { accountKeys: string[] } };
   meta: {
     err: unknown; fee: number; preBalances: number[]; postBalances: number[]; logMessages: string[] | null;
+    loadedAddresses?: { writable: string[]; readonly: string[] };
     preTokenBalances?: TokenBalance[]; postTokenBalances?: TokenBalance[];
   } | null;
 }
 
 export interface Facts {
-  signature: string; slot: number; ts: number; ok: boolean;
+  signature: string; slot: number; index: number; ts: number; ok: boolean;
   fee: bigint; tip: bigint;
   programs: string[];
   /** Programs the transaction called directly that are neither infrastructure nor a pinned swap venue. */
@@ -42,7 +45,8 @@ const bump = (m: Map<string, bigint>, k: string, v: bigint) => { if (v !== 0n) m
 export function analyze(wallet: string, signature: string, tx: ChainTx): Facts | undefined {
   const meta = tx.meta;
   if (!meta || tx.blockTime == null) return undefined;
-  const keys = tx.transaction.message.accountKeys, i = keys.indexOf(wallet);
+  // balances are indexed over static keys, then loaded writable, then loaded readonly addresses
+  const keys = [...tx.transaction.message.accountKeys, ...(meta.loadedAddresses?.writable ?? []), ...(meta.loadedAddresses?.readonly ?? [])], i = keys.indexOf(wallet);
   if (i < 0) return undefined;
   if (!meta.logMessages) throw new Error(`Transaction ${signature} has no logs; refusing to guess its programs`);
   if (meta.logMessages.some(l => l.includes('Log truncated'))) throw new Error(`Transaction ${signature} logs were truncated`);
@@ -50,7 +54,7 @@ export function analyze(wallet: string, signature: string, tx: ChainTx): Facts |
   const fee = payer ? BigInt(meta.fee) : 0n;
   const { all: programs, top } = programsOf(meta.logMessages);
   // Judge only what the wallet called directly: venues a supported router (Jupiter) routes through are its implementation detail.
-  const base = { signature, slot: tx.slot, ts: tx.blockTime * 1000, fee, programs,
+  const base = { signature, slot: tx.slot, index: tx.transactionIndex ?? 0, ts: tx.blockTime * 1000, fee, programs,
     foreign: top.filter(p => !INFRA_PROGRAMS.has(p) && !SWAP_PROGRAMS.has(p)), swapProgram: top.some(p => SWAP_PROGRAMS.has(p)) };
   const decimals = new Map<string, number>([[WSOL, 9]]);
   const actual = new Map<string, bigint>(), economic = new Map<string, bigint>();
@@ -94,6 +98,8 @@ export interface ReplayResult {
   rentAccounts: number;
 }
 
+/** A price sample further than this from a transaction is not evidence of its price. */
+const MAX_SAMPLE_GAP_MS = 10 * 60_000;
 const round = (n: number, d = 6) => Number(n.toFixed(d));
 const units = (raw: bigint, dec: number) => Number(raw) / 10 ** dec;
 const short = (m: string) => `${m.slice(0, 4)}…${m.slice(-4)}`;
@@ -108,19 +114,22 @@ interface Lot { qty: number; unit: number }
 export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ctx: ReplayContext): ReplayResult {
   const balances = new Map<string, bigint>(), decimals = new Map<string, number>([[WSOL, 9]]), lots = new Map<string, Lot[]>();
   let lastSol = ctx.opening.prices[WSOL];
-  let rentAccounts = ctx.opening.rentAccounts;
+  let rentAccounts = ctx.opening.rentAccounts, currentSig = '';
   const out: ReplayResult = { trades: [], posts: [], points: [], unsupported: [], unpricedTouches: [], unpriced: [], balances, rentAccounts };
+  const touched = new Set<string>();
+  const unpricedTouch = (signature: string, ts: number) => { if (!touched.has(signature)) { touched.add(signature); out.unpricedTouches.push({ signature, ts }); } };
   const used = new Set<number>();
   const stamp = (t: number) => { while (used.has(t)) t++; used.add(t); return t; };
 
   const px = (mint: string, ts: number): number | undefined => {
     if (Object.hasOwn(STABLES, mint)) return 1;
-    const s = nearestSample(ctx.samples.get(mint) ?? [], ts);
-    if (mint === WSOL) { if (s !== undefined) lastSol = s; return s ?? lastSol; }
+    const s = nearestSample(ctx.samples.get(mint) ?? [], ts, MAX_SAMPLE_GAP_MS);
+    if (mint === WSOL) { if (s !== undefined) lastSol = s; else if (currentSig) unpricedTouch(currentSig, ts); return s ?? lastSol; } // a SOL price gap is flagged, never silently guessed
     return s; // a token's mark comes from a stored market sample, never from what it just traded for
   };
   const push = (mint: string, qty: number, unit: number) => { if (qty > 0) (lots.get(mint) ?? lots.set(mint, []).get(mint)!).push({ qty, unit }); };
-  const take = (mint: string, qty: number): number => { // FIFO; returns the cost basis of what left
+  let unknownBasis = false;
+  const take = (mint: string, qty: number, fallbackUnit = 0): number => { // FIFO; returns the cost basis of what left
     const book = lots.get(mint) ?? [];
     let left = qty, cost = 0;
     while (left > 1e-12 && book.length) {
@@ -128,7 +137,10 @@ export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ct
       cost += t * l.unit; l.qty -= t; left -= t;
       if (l.qty <= 1e-12) book.shift();
     }
-    return cost; // anything we hold no lot for carries no basis here; the equity series still reflects it
+    // We hold no lot for the rest (an unpriced opening holding or deposit). Never read a missing cost as zero cost, which would be pure profit:
+    // charge it at today's price so no gain is recorded, and block ranking until the window moves past this.
+    if (left > 1e-9 * Math.max(1, qty)) { cost += left * fallbackUnit; unknownBasis = true; }
+    return cost;
   };
   const value = (ts: number) => {
     let usd = 0;
@@ -145,9 +157,9 @@ export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ct
   }
   { const v = value(ctx.opening.tsMs); const ts = stamp(ctx.opening.tsMs); out.points.push({ ts, usd: round(v.usd), sol: round(v.solPx), flow: round(v.usd) }); }
 
-  for (const f of [...facts].sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature))) {
+  for (const f of [...facts].sort((a, b) => a.slot - b.slot || a.index - b.index || a.signature.localeCompare(b.signature))) {
     if (f.slot <= ctx.opening.slot) continue;
-    const ts = stamp(f.ts);
+    const ts = stamp(f.ts); currentSig = f.signature;
     for (const [m, d] of f.decimals) decimals.set(m, d);
     for (const [m, v] of f.actual) balances.set(m, (balances.get(m) ?? 0n) + v);
     rentAccounts += f.rentAccounts;
@@ -160,7 +172,7 @@ export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ct
     if (f.ok && f.foreign.length) {
       // Unsupported activity (lending, LP, perps, unknown programs): stored and surfaced, valued at market as a flow so equity stays continuous.
       out.unsupported.push({ signature: f.signature, ts, programs: f.foreign });
-      for (const l of legs) { const p = px(l.mint, ts); if (p === undefined) continue; flow += (l.neg ? -1 : 1) * l.qty * p; if (l.neg) take(l.mint, l.qty); else push(l.mint, l.qty, p); }
+      for (const l of legs) { const p = px(l.mint, ts); if (p === undefined) { unpricedTouch(f.signature, ts); continue; } flow += (l.neg ? -1 : 1) * l.qty * p; if (l.neg) take(l.mint, l.qty, p); else push(l.mint, l.qty, p); }
     } else if (f.ok && f.swapProgram && outs.length && ins.length) {
       const isNum = (m: string) => m === WSOL || Object.hasOwn(STABLES, m);
       const pNum = (m: string) => (isNum(m) ? px(m, ts) : undefined);
@@ -172,24 +184,24 @@ export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ct
       const inBasis = new Map<string, number>(); // total USD cost for each incoming mint
 
       if (!unknownOuts.length && !unknownIns.length) {
-        const vo = fair(outs), vi = fair(ins), basis = outs.reduce((s, l) => s + take(l.mint, l.qty), 0);
+        const vo = fair(outs), vi = fair(ins), basis = outs.reduce((s, l) => s + take(l.mint, l.qty, pNum(l.mint) ?? 0), 0);
         swapCost = Math.max(0, vo - vi);
         priceComp = (swapCost > 0 ? vo : vi) - basis;
         for (const l of ins) inBasis.set(l.mint, l.qty * (pNum(l.mint) ?? 0));
         vol = Math.max(vo, vi);
       } else if (unknownIns.length === 1 && !unknownOuts.length) { // bought a token for SOL or a stablecoin
-        const vo = fair(outs), basis = outs.reduce((s, l) => s + take(l.mint, l.qty), 0), numIns = ins.filter(l => pNum(l.mint) !== undefined);
+        const vo = fair(outs), basis = outs.reduce((s, l) => s + take(l.mint, l.qty, pNum(l.mint) ?? 0), 0), numIns = ins.filter(l => pNum(l.mint) !== undefined);
         priceComp = vo - basis;
         for (const l of numIns) inBasis.set(l.mint, l.qty * (pNum(l.mint) ?? 0));
         inBasis.set(unknownIns[0].mint, Math.max(0, vo - fair(numIns)));
         vol = vo;
       } else if (unknownOuts.length === 1 && !unknownIns.length) { // sold a token for SOL or a stablecoin
-        const vi = fair(ins), basis = outs.reduce((s, l) => s + take(l.mint, l.qty), 0);
+        const vi = fair(ins), unitOut = outs[0].qty > 0 ? vi / outs[0].qty : 0, basis = outs.reduce((s, l) => s + take(l.mint, l.qty, unitOut), 0);
         priceComp = vi - basis;
         for (const l of ins) inBasis.set(l.mint, l.qty * (pNum(l.mint) ?? 0));
         vol = vi;
       } else { // token for token, or several unknowns: nothing prices the exchange, so cost basis is carried over unrealized
-        const basis = outs.reduce((s, l) => s + take(l.mint, l.qty), 0), w = ins.map(l => l.qty * (pNum(l.mint) ?? 1)), tw = w.reduce((a, b) => a + b, 0) || 1;
+        const basis = outs.reduce((s, l) => s + take(l.mint, l.qty, 0), 0), w = ins.map(l => l.qty * (pNum(l.mint) ?? 1)), tw = w.reduce((a, b) => a + b, 0) || 1;
         ins.forEach((l, k) => inBasis.set(l.mint, basis * w[k] / tw));
         note = 'Token-for-token swap: cost carried over, no gain or loss recorded until it is sold for SOL or a stablecoin';
         vol = basis;
@@ -199,7 +211,7 @@ export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ct
       if (swapCost > 0) components.push({ label: 'swapFee', usd: -round(swapCost) });
       if (feeUsd > 0) components.push({ label: 'priorityFee', usd: -round(feeUsd) });
       if (tipUsd > 0) components.push({ label: 'tip', usd: -round(tipUsd) });
-      if (touchedUnpriced) out.unpricedTouches.push({ signature: f.signature, ts });
+      if (touchedUnpriced) unpricedTouch(f.signature, ts);
       const sym = (m: string) => ctx.symbols.get(m) ?? (m === WSOL ? 'SOL' : STABLES[m] ?? short(m));
       const legsOut = [...outs.map(l => ({ l, s: -1 })), ...ins.map(l => ({ l, s: 1 }))].map(({ l, s }) => {
         const p = pNum(l.mint) ?? ((inBasis.get(l.mint) ?? 0) / (l.qty || 1));
@@ -213,8 +225,9 @@ export function replay(agent: Pick<Agent, 'slug' | 'wallet'>, facts: Facts[], ct
       out.posts.push({ id: `trade:${f.signature}`, ts, agentSlug: agent.slug, type: 'trade', interactionId: f.signature, reactions: { useful: 0, sharp: 0, fade: 0 }, replies: 0 });
     } else if (f.ok) {
       // One-directional movement (or a swap program with only one side): a deposit or withdrawal, excluded from returns.
-      for (const l of legs) { const p = px(l.mint, ts); if (p === undefined) continue; flow += (l.neg ? -1 : 1) * l.qty * p; if (l.neg) take(l.mint, l.qty); else push(l.mint, l.qty, p); }
+      for (const l of legs) { const p = px(l.mint, ts); if (p === undefined) { unpricedTouch(f.signature, ts); continue; } flow += (l.neg ? -1 : 1) * l.qty * p; if (l.neg) take(l.mint, l.qty, p); else push(l.mint, l.qty, p); }
     }
+    if (unknownBasis) { unpricedTouch(f.signature, ts); unknownBasis = false; }
     const v = value(ts);
     out.points.push({ ts, usd: round(v.usd), sol: round(v.solPx), flow: round(flow) });
   }

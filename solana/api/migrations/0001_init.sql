@@ -19,11 +19,12 @@ create table solana.openings (
 );
 
 create table solana.raw_transactions (
-  signature  text primary key,
-  wallet     text not null,
+  signature  text not null,
+  wallet     text not null,   -- one row per tracked wallet: a transaction can touch two agents
   slot       bigint not null,
   block_ms   bigint not null,
-  data       jsonb not null
+  data       jsonb not null,
+  primary key (signature, wallet)
 );
 create index raw_transactions_wallet_slot on solana.raw_transactions (wallet, slot);
 

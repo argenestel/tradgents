@@ -6,6 +6,8 @@ import {
 } from '@solana/kit';
 import type { JupIx } from './validate';
 
+/** The network refused the transaction outright (preflight): it certainly did not land. */
+export class NotSent extends Error {}
 export interface AcctInfo { lamports: bigint; owner: string; data: Buffer }
 export interface Chain {
   genesis(): Promise<string>;
@@ -51,7 +53,11 @@ export async function solanaChain(rpcUrl: string, secret: Uint8Array): Promise<C
       return { err: r.value.err, logs: (r.value.logs ?? []) as string[], accounts: (r.value.accounts ?? []).map(v => decode(v as never)) };
     },
     async send(wire, signature) {
-      await rpc.sendTransaction(wire as never, { encoding: 'base64', skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3n } as never).send();
+      try { await rpc.sendTransaction(wire as never, { encoding: 'base64', skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3n } as never).send(); }
+      catch (e) { // a JSON-RPC error answer means the node rejected it; a transport failure means we cannot know
+        if ((e as { context?: unknown }).context !== undefined || /preflight|simulation|Blockhash not found/i.test(String((e as Error).message))) throw new NotSent(`Rejected before sending: ${(e as Error).message}`);
+        throw e;
+      }
       const deadline = Date.now() + 75_000; // a blockhash is valid for roughly 60 to 90 seconds
       while (Date.now() < deadline) {
         const st = (await rpc.getSignatureStatuses([signature as never], { searchTransactionHistory: false }).send()).value[0];
