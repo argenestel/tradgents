@@ -1,8 +1,7 @@
-import { EXPLORER, isDemoRef } from "@/lib/config";
-import { MOCK_NOW, num, shortAddr, timeAgo, usd } from "@/lib/format";
+import { EXPLORER } from "@/lib/config";
+import { num, shortAddr, timeAgo, usd } from "@/lib/format";
 import { PROTOCOLS, interactionTitle } from "@/lib/protocols";
 import type { Interaction } from "@/lib/types";
-import { CopyPanel } from "./CopyPanel";
 import { CopyText } from "./CopyText";
 import { ProtocolLogo, TokenIcon } from "./glyphs";
 import { Pct, Pnl } from "./ui";
@@ -13,13 +12,11 @@ const cost = (i: Interaction, ...labels: string[]) => i.components.filter((c) =>
 export function InteractionCard({ i, showTime = false }: { i: Interaction; showTime?: boolean }) {
   const p = PROTOCOLS[i.protocol];
   const title = interactionTitle(i);
-  const copyable = i.protocol === "jupiter" && i.kind === "swap";
   const [from, to] = [i.legs[0]?.symbol ?? "?", i.legs[1]?.symbol ?? "?"];
   const retPct = i.notionalUsd ? (i.pnlUsd / i.notionalUsd) * 100 : 0;
   const fees = cost(i, "swapFee", "borrowCost");
   const priority = cost(i, "priorityFee");
   const tip = cost(i, "tip");
-  const demo = isDemoRef(i.signature);
 
   return (
     <article aria-label={title} className="rounded-lg border border-line bg-surface">
@@ -52,19 +49,11 @@ export function InteractionCard({ i, showTime = false }: { i: Interaction; showT
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[13px] text-muted">
         <span>Transaction</span>
-        {demo ? (
-          <span title="Simulated signature, not a real transaction"><CopyText value={i.signature} display={shortAddr(i.signature)} label="signature" /> <span className="font-semibold text-warn">simulated</span></span>
-        ) : (
-          <span className="inline-flex items-center gap-1"><CopyText value={i.signature} display={shortAddr(i.signature)} label="signature" className="text-accent" /><a href={EXPLORER.tx(i.signature)} target="_blank" rel="noopener noreferrer" className="font-bold text-accent" aria-label="Open in explorer">Explorer</a></span>
-        )}
-        {showTime && <span>{timeAgo(i.ts)}</span>}
-        <span className="ml-auto">
-          {copyable ? (
-            <CopyPanel pair={i.meta.pair ?? "SOL/USDC"} agentNotionalUsd={i.notionalUsd} ageMinutes={Math.max(1, (MOCK_NOW - i.ts) / 60000)} />
-          ) : (
-            <span className="inline-block py-2" title="Copying is available for spot swaps for now">Can&apos;t copy yet</span>
-          )}
+        <span className="inline-flex items-center gap-1">
+          <CopyText value={i.signature} display={shortAddr(i.signature)} label="signature" className="text-accent" />
+          <a href={EXPLORER.tx(i.signature)} target="_blank" rel="noopener noreferrer" className="font-bold text-accent hover:underline" aria-label="Open this transaction in the explorer">Explorer</a>
         </span>
+        {showTime && <span suppressHydrationWarning>{timeAgo(i.ts)}</span>}
       </div>
     </article>
   );

@@ -9,7 +9,8 @@ import { PROTOCOL_LIST, RUNTIMES } from "@/lib/protocols";
 import type { LeaderboardRow, Metrics, ProtocolId, RuntimeId, Tier, WindowKey } from "@/lib/types";
 import { Info } from "./Info";
 import { ForestAxis, IntervalBar } from "./IntervalBar";
-import { AgentChip, LuckFlag, Pct } from "./ui";
+import { LiveRefresh } from "./LiveRefresh";
+import { AgentChip, Empty, LuckFlag, Pct } from "./ui";
 
 const WINDOWS: { key: WindowKey; label: string }[] = [
   { key: "7d", label: "7 days" },
@@ -90,8 +91,19 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
   const filtersActive = !!(protocol || runtime || tier || verifiedOnly);
   const luckCount = ranked.filter((r) => r.metrics[win].sharpeLo <= 0).length;
 
+  if (rows.length === 0) {
+    return (
+      <div>
+        <LiveRefresh seconds={10} />
+        <h1 className="display text-[40px] sm:text-[60px]">Who has an edge, and who got lucky?</h1>
+        <div className="mt-10"><Empty title="No agents yet">The first agent to register and trade appears here immediately. <a href="/join" className="font-bold text-accent hover:underline">Add yours</a>.</Empty></div>
+      </div>
+    );
+  }
+
   return (
     <div>
+      <LiveRefresh seconds={10} />
       <div className="mb-7 max-w-3xl">
         <h1 className="display text-[44px] sm:text-[64px]">Who has an edge, and who got lucky?</h1>
         <p className="mt-4 max-w-2xl text-[18px] leading-relaxed text-muted">
@@ -134,12 +146,13 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
       </div>
 
       <p className="mb-3 text-[14px] text-muted" aria-live="polite">
-        {ranked.length === 0 ? "No ranked agents match." : <>
+        {ranked.length === 0 ? "No agent has enough history to be ranked yet. Early results are below." : <>
           <b className="text-fg">{ranked.length}</b> ranked{luckCount > 0 && <>, <b className="text-warn">{luckCount}</b> of them could still be luck</>}
           {young.length ? <>. {young.length} more {young.length === 1 ? "has" : "have"} too little history to rank.</> : "."}
         </>}
       </p>
 
+      {(ranked.length > 0 || filtersActive) && (<>
       <div role="table" aria-label="Agent leaderboard" className="border-t-2 border-fg">
         <div role="row" className={`hidden border-b border-line text-[13px] ${COLS}`}>
           <div role="columnheader" className="sr-only">Rank</div>
@@ -198,20 +211,30 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
       <p className="mt-3 max-w-3xl text-[15px] italic leading-relaxed text-muted">
         Figure. The 95% range of each agent&apos;s Sharpe score on one shared scale. White bars sit entirely above zero. Hatched amber bars include zero, so the result could be chance.
       </p>
+      </>)}
 
       {young.length > 0 && (
-        <section className="mt-12" aria-label="Not ranked yet">
-          <h2 className="text-[22px] font-extrabold tracking-[-0.025em]">Not ranked yet</h2>
-          <p className="mt-1 max-w-xl text-[15px] text-muted">These agents have fewer than 7 days or 10 trades in this window. They are listed so nothing is hidden.</p>
+        <section className="mt-12" aria-label="Early results">
+          <h2 className="text-[22px] font-extrabold tracking-[-0.025em]">Early results</h2>
+          <p className="mt-1 max-w-xl text-[15px] text-muted">These agents have fewer than 7 days or 10 trades in this window, so it is too early to tell skill from luck. The numbers are real, just not meaningful yet.</p>
           <ul className="mt-4 divide-y divide-line border-y border-line">
-            {young.map((r) => (
-              <li key={r.agent.slug} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
-                <AgentChip agent={r.agent} />
-                <span className="num text-[14px] text-muted">
-                  {r.metrics[win].days === 0 && r.metrics[win].trades === 0 ? "No trades yet" : `${r.metrics[win].days} days, ${r.metrics[win].trades} trades, ${usd(r.equityUsd)} equity`}
-                </span>
-              </li>
-            ))}
+            {young.map((r) => {
+              const m = r.metrics[win];
+              return (
+                <li key={r.agent.slug} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3.5">
+                  <AgentChip agent={r.agent} />
+                  <div className="num flex flex-wrap items-center gap-x-6 gap-y-1 text-[14px]">
+                    {m.trades === 0 ? <span className="text-muted">No trades yet</span> : (
+                      <>
+                        <span className="text-[16px] font-bold"><Pct value={m.returnPct} /></span>
+                        <span className="text-muted">{m.trades} {m.trades === 1 ? "trade" : "trades"} over {m.days} {m.days === 1 ? "day" : "days"}</span>
+                        <span className="text-muted">{usd(r.equityUsd)} equity</span>
+                      </>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

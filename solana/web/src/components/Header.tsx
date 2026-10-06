@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
 import { BrandMark } from "./glyphs";
 import { SearchBox, type SearchItem } from "./SearchBox";
 
@@ -11,10 +10,9 @@ const NAV = [
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/explore", label: "Explore" },
   { href: "/calls", label: "Calls" },
-  { href: "/join", label: "Add an agent" },
 ];
 
-export function Header({ wallet, searchItems = [] }: { wallet: ReactNode; searchItems?: SearchItem[] }) {
+export function Header({ searchItems = [] }: { searchItems?: SearchItem[] }) {
   const path = usePathname();
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   return (
@@ -40,7 +38,7 @@ export function Header({ wallet, searchItems = [] }: { wallet: ReactNode; search
         </div>
         <div className="flex items-center gap-2">
           <SearchBox items={searchItems} />
-          {wallet}
+          <Link href="/join" className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 py-2 text-[14px] font-bold text-white hover:bg-accent-deep">Add an agent</Link>
         </div>
       </div>
       <nav aria-label="Primary" className="flex gap-1 overflow-x-auto border-t border-line px-3 py-1.5 md:hidden">

@@ -7,9 +7,11 @@ import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { Store } from './db';
+import { ORCA_POOL, REGISTRY_PROGRAM } from './devnet';
 import { decodeBase58 } from './encoding';
 import { detail, type Valuation } from './metrics';
 import { PROTOCOLS, RUNTIMES } from './protocols';
+import { createWorker } from './worker';
 import type { Agent, AgentDetail, Call, Interaction, LeaderboardRow, PnlComponent, Post, PostView, ProtocolId, ProtocolStat } from './types';
 
 export interface ProtocolPage {
@@ -38,10 +40,19 @@ const signed = z.object({ domain: z.literal('tradgents:v1'), path: z.enum(['/v1/
   timestamp: z.number().int(), nonce: z.string().min(16).max(128), payload: z.unknown(),
 }).strict();
 
+export function verifyWallet(wallet: string, message: string, signatureBase64: string): boolean {
+  try {
+    const bytes = decodeBase58(wallet);
+    if (bytes.length !== 32) return false;
+    const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), bytes]), format: 'der', type: 'spki' });
+    return verify(null, Buffer.from(message, 'utf8'), key, Buffer.from(signatureBase64, 'base64'));
+  } catch { return false; }
+}
+
 export function createApp(store: Store, now: () => number = Date.now) {
   const app = new Hono();
   const origins = (process.env.CORS_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean);
-  if (origins.length) app.use('/v1/*', cors({ origin: origins, allowMethods: ['GET', 'POST', 'OPTIONS'], allowHeaders: ['Content-Type'], exposeHeaders: ['X-Demo-Data', 'Retry-After'] }));
+  if (origins.length) app.use('/v1/*', cors({ origin: origins, allowMethods: ['GET', 'POST', 'OPTIONS'], allowHeaders: ['Content-Type'], exposeHeaders: ['Retry-After'] }));
   app.use('/v1/*', bodyLimit({ maxSize: 8192 }));
   app.onError((e, c) => {
     if (e.name === 'BodyLimitError') return c.json({ error: 'Payload too large' }, 413);
@@ -52,12 +63,12 @@ export function createApp(store: Store, now: () => number = Date.now) {
   const load = (a: Agent): AgentDetail => {
     const equity = store.db.prepare('SELECT data,flow FROM equity WHERE agent=? ORDER BY ts').all(a.slug) as { data: string; flow: number }[];
     return detail(a, equity.map(r => ({ ...JSON.parse(r.data), flow: r.flow } as Valuation)),
-      store.rows<Interaction>('SELECT data,demo FROM trades WHERE agent=? ORDER BY ts DESC', a.slug).map(r => r.data), now());
+      store.rows<Interaction>('SELECT data FROM trades WHERE agent=? ORDER BY ts DESC', a.slug), now());
   };
   const protocolPage = (id: ProtocolId): ProtocolPage => {
     const agents: ProtocolPage['agents'] = [], waterfall = new Map<PnlComponent, number>(), kinds = new Map<string, { trades: number; pnlUsd: number }>();
     for (const row of store.agents()) {
-      const d = load(row.data), stat = d.byProtocol.find(s => s.protocol === id);
+      const d = load(row), stat = d.byProtocol.find(s => s.protocol === id);
       if (stat) agents.push({ slug: d.agent.slug, name: d.agent.name, stat });
       for (const i of d.interactions.filter(i => i.protocol === id)) {
         for (const c of i.components) waterfall.set(c.label, (waterfall.get(c.label) ?? 0) + c.usd);
@@ -70,10 +81,15 @@ export function createApp(store: Store, now: () => number = Date.now) {
       kinds: [...kinds].map(([kind, k]) => ({ kind, ...k })) };
   };
   app.get('/v1/health', c => { store.db.prepare('SELECT 1').get(); return c.json({ ok: true }); });
+  app.get('/v1/meta', c => {
+    const pool = JSON.parse(store.state('pool') ?? 'null') as { price: number; feeRate: number; at: number } | null;
+    const count = (t: string) => (store.db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+    return c.json({ cluster: 'devnet', programId: REGISTRY_PROGRAM, pool: ORCA_POOL, valuation: 'devUSDC at Orca devnet pool price',
+      solPriceUsd: pool?.price ?? null, priceAt: pool?.at ?? null, lastIndexedAt: Number(store.state('lastCycle') ?? 0) || null,
+      agents: count('agents'), trades: count('trades') });
+  });
   app.get('/v1/leaderboard', c => {
-    const rows = store.agents();
-    if (rows.some(r => r.demo) || store.rows('SELECT data,demo FROM equity UNION ALL SELECT data,demo FROM trades').some(r => r.demo)) c.header('X-Demo-Data', 'true');
-    const result: LeaderboardRow[] = rows.map(r => { const d = load(r.data), pts = d.equity.slice(-30); return {
+    const result: LeaderboardRow[] = store.agents().map(a => { const d = load(a), pts = d.equity.slice(-30); return {
       agent: d.agent, equityUsd: d.equityUsd, tier: d.tier, metrics: d.metrics,
       spark: pts.map(p => pts[0].usd > 0 ? p.usd / pts[0].usd * 100 : 100),
     }; });
@@ -83,10 +99,8 @@ export function createApp(store: Store, now: () => number = Date.now) {
     return c.json(result);
   });
   app.get('/v1/agents/:slug', c => {
-    const row = store.agent(c.req.param('slug'));
-    if (!row) return c.json({ error: 'Unknown agent' }, 404);
-    if (row.demo || store.rows('SELECT data,demo FROM equity WHERE agent=? UNION ALL SELECT data,demo FROM trades WHERE agent=?', row.data.slug, row.data.slug).some(r => r.demo)) c.header('X-Demo-Data', 'true');
-    return c.json(load(row.data));
+    const agent = store.agent(c.req.param('slug'));
+    return agent ? c.json(load(agent)) : c.json({ error: 'Unknown agent' }, 404);
   });
   app.get('/v1/feed', c => {
     const filter = c.req.query('filter') ?? 'all', agent = c.req.query('agent'), limit = Number(c.req.query('limit') ?? 40);
@@ -95,31 +109,22 @@ export function createApp(store: Store, now: () => number = Date.now) {
     if (agent !== undefined) { conditions.push('agent=?'); args.push(agent); }
     if (filter !== 'all') { conditions.push("json_extract(data,'$.type')=?"); args.push(filter === 'calls' ? 'call' : filter === 'trades' ? 'trade' : 'thesis'); }
     args.push(limit);
-    const rows = store.rows<Post>(`SELECT data,demo FROM posts ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''} ORDER BY ts DESC,id DESC LIMIT ?`, ...args);
-    const views: PostView[] = rows.map(r => {
-      const a = store.agent(r.data.agentSlug)!;
-      const interaction = r.data.interactionId ? store.rows<Interaction>('SELECT data,demo FROM trades WHERE id=?', r.data.interactionId)[0] : undefined;
-      const call = r.data.callId ? store.rows<Call>('SELECT data,demo FROM calls WHERE id=?', r.data.callId)[0] : undefined;
-      if (r.demo || a.demo || interaction?.demo || call?.demo) c.header('X-Demo-Data', 'true');
-      return { ...r.data, agent: a.data, ...(interaction ? { interaction: interaction.data } : {}), ...(call ? { call: call.data } : {}) };
+    const rows = store.rows<Post>(`SELECT data FROM posts ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''} ORDER BY ts DESC,id DESC LIMIT ?`, ...args);
+    const views: PostView[] = rows.map(p => {
+      const interaction = p.interactionId ? store.rows<Interaction>('SELECT data FROM trades WHERE id=?', p.interactionId)[0] : undefined;
+      const call = p.callId ? store.rows<Call>('SELECT data FROM calls WHERE id=?', p.callId)[0] : undefined;
+      return { ...p, agent: store.agent(p.agentSlug)!, ...(interaction ? { interaction } : {}), ...(call ? { call } : {}) };
     });
     return c.json(views);
   });
   app.get('/v1/calls', c => {
     const agent = c.req.query('agent');
-    const rows = store.rows<Call>(`SELECT data,demo FROM calls ${agent !== undefined ? 'WHERE agent=?' : ''} ORDER BY ts DESC,id DESC`, ...(agent !== undefined ? [agent] : []));
-    if (rows.some(r => r.demo)) c.header('X-Demo-Data', 'true');
-    return c.json(rows.map(r => r.data));
+    return c.json(store.rows<Call>(`SELECT data FROM calls ${agent !== undefined ? 'WHERE agent=?' : ''} ORDER BY ts DESC,id DESC`, ...(agent !== undefined ? [agent] : [])));
   });
-  app.get('/v1/protocols', c => {
-    if (store.rows('SELECT data,demo FROM trades').some(r => r.demo)) c.header('X-Demo-Data', 'true');
-    return c.json((Object.keys(PROTOCOLS) as ProtocolId[]).map(protocolPage));
-  });
+  app.get('/v1/protocols', c => c.json((Object.keys(PROTOCOLS) as ProtocolId[]).map(protocolPage)));
   app.get('/v1/protocols/:id', c => {
     const id = c.req.param('id');
-    if (!Object.hasOwn(PROTOCOLS, id)) return c.json({ error: 'Unknown protocol' }, 404);
-    if (store.rows<Interaction>('SELECT data,demo FROM trades').some(r => r.demo && r.data.protocol === id)) c.header('X-Demo-Data', 'true');
-    return c.json(protocolPage(id as ProtocolId));
+    return Object.hasOwn(PROTOCOLS, id) ? c.json(protocolPage(id as ProtocolId)) : c.json({ error: 'Unknown protocol' }, 404);
   });
   app.post('/v1/agents/register', async c => {
     const input = registration.parse(await c.req.json());
@@ -128,30 +133,33 @@ export function createApp(store: Store, now: () => number = Date.now) {
     const agent: Agent = { ...input, verification: 'declared', startedAt: ts, status: 'stale', bondSol: 0,
       fingerprint: { avgHoldHours: 0, avgLeverage: 0, tradesPerDay: 0 } };
     store.transaction(() => {
-      store.putAgent(agent, false);
+      store.putAgent(agent);
       store.db.prepare('INSERT INTO challenges(id,wallet,message,metadata,expires) VALUES(?,?,?,?,?)').run(challenge.id, agent.wallet,
         `tradgents:register:${challenge.id}:${challenge.expiresAt}`, JSON.stringify(input), challenge.expiresAt);
     });
     return c.json({ agent, challenge }, 201);
   });
+  /** Proof of wallet control: sign the registration challenge message with the agent key. */
+  app.post('/v1/agents/:slug/claim', async c => {
+    const body = envelope.parse(await c.req.json()), agent = store.agent(c.req.param('slug')), ts = now();
+    if (!agent) return c.json({ error: 'Unknown agent' }, 404);
+    const challenge = store.db.prepare('SELECT id,expires,used FROM challenges WHERE wallet=? AND message=?').get(agent.wallet, body.message) as { id: string; expires: number; used: number } | undefined;
+    if (!challenge || challenge.used || challenge.expires < ts || !verifyWallet(agent.wallet, body.message, body.signature)) return c.json({ error: 'Invalid proof' }, 401);
+    const verified: Agent = agent.verification === 'declared' ? { ...agent, verification: 'wallet_signed' } : agent;
+    store.transaction(() => { store.db.prepare('UPDATE challenges SET used=1 WHERE id=?').run(challenge.id); store.updateAgent(verified); });
+    return c.json(verified);
+  });
   for (const path of ['/v1/posts', '/v1/calls'] as const) app.post(path, async c => {
     const body = envelope.parse(await c.req.json()), message = signed.parse(JSON.parse(body.message));
     const payload = path === '/v1/posts' ? postPayload.parse(message.payload) : callPayload.parse(message.payload);
-    const row = store.agent(payload.agentSlug), ts = now();
-    if (!row || message.path !== path || Math.abs(ts - message.timestamp) > 300_000) return c.json({ error: 'Invalid authentication' }, 401);
-    let valid = false;
-    try {
-      const bytes = decodeBase58(row.data.wallet);
-      if (bytes.length === 32) {
-        const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), bytes]), format: 'der', type: 'spki' });
-        valid = verify(null, Buffer.from(body.message, 'utf8'), key, Buffer.from(body.signature, 'base64'));
-      }
-    } catch { /* Invalid legacy/demo wallet bytes are an authentication failure. */ }
+    const agent = store.agent(payload.agentSlug), ts = now();
+    if (!agent || message.path !== path || Math.abs(ts - message.timestamp) > 300_000) return c.json({ error: 'Invalid authentication' }, 401);
+    const valid = verifyWallet(agent.wallet, body.message, body.signature);
     if (!valid) return c.json({ error: 'Invalid signature' }, 401);
     if ('expiresAt' in payload && payload.expiresAt <= ts) return c.json({ error: 'Call must expire in the future' }, 400);
     const result = store.transaction(() => {
       store.db.prepare('DELETE FROM nonces WHERE expires<?').run(ts);
-      if (store.db.prepare('SELECT 1 FROM nonces WHERE wallet=? AND nonce=?').get(row.data.wallet, message.nonce)) return 'replay';
+      if (store.db.prepare('SELECT 1 FROM nonces WHERE wallet=? AND nonce=?').get(agent.wallet, message.nonce)) return 'replay';
       const quota = store.db.prepare("SELECT last FROM quotas WHERE principal=? AND kind='write'").get(payload.agentSlug) as { last: number } | undefined;
       if (quota && ts - quota.last < 1000) return 'rate';
       const id = randomUUID();
@@ -159,13 +167,13 @@ export function createApp(store: Store, now: () => number = Date.now) {
       if (path === '/v1/posts') {
         const p = postPayload.parse(payload);
         saved = { ...p, id, ts, reactions: { useful: 0, sharp: 0, fade: 0 }, replies: 0 };
-        store.putPost(saved, false);
+        store.putPost(saved);
       } else {
         saved = { ...callPayload.parse(payload), id, createdAt: ts, status: 'open', traded: false };
-        store.putCall(saved, false);
-        store.putPost({ id: randomUUID(), ts, agentSlug: payload.agentSlug, type: 'call', callId: id, reactions: { useful: 0, sharp: 0, fade: 0 }, replies: 0 }, false);
+        store.putCall(saved);
+        store.putPost({ id: randomUUID(), ts, agentSlug: payload.agentSlug, type: 'call', callId: id, reactions: { useful: 0, sharp: 0, fade: 0 }, replies: 0 });
       }
-      store.db.prepare('INSERT INTO nonces VALUES(?,?,?)').run(row.data.wallet, message.nonce, message.timestamp + 300_000);
+      store.db.prepare('INSERT INTO nonces VALUES(?,?,?)').run(agent.wallet, message.nonce, message.timestamp + 300_000);
       store.db.prepare("INSERT INTO quotas VALUES(?,'write',?) ON CONFLICT(principal,kind) DO UPDATE SET last=excluded.last").run(payload.agentSlug, ts);
       return saved;
     });
@@ -176,7 +184,8 @@ export function createApp(store: Store, now: () => number = Date.now) {
   return app;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const store = new Store();
+  const store = new Store(), controller = new AbortController();
   const server = serve({ fetch: createApp(store).fetch, hostname: process.env.HOST ?? '127.0.0.1', port: Number(process.env.PORT ?? 8787) });
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => server.close(() => { store.close(); process.exit(0); }));
+  const worker = process.env.INDEXER === 'off' ? undefined : createWorker(store, { intervalSeconds: Number(process.env.POLL_SECONDS ?? 10) }).run(controller.signal);
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { controller.abort(); void Promise.resolve(worker).then(() => server.close(() => { store.close(); process.exit(0); })); });
 }

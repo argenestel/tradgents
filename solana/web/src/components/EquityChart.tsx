@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CHAIN_UI } from "@/lib/chain";
-import { dateLabel, pct, usd } from "@/lib/format";
+import { dateLabel, pct, timeLabel, usd } from "@/lib/format";
 import type { EquityPoint } from "@/lib/types";
 
 const W = 800;
@@ -15,7 +15,8 @@ function line(vals: number[], lo: number, hi: number, h: number): string {
   return vals.map((v, i) => `${i === 0 ? "M" : "L"}${(i / Math.max(1, vals.length - 1)) * W},${h - PAD - ((v - lo) / span) * (h - PAD * 2)}`).join(" ");
 }
 
-const niceUsd = (v: number) => `$${Math.round(v / 50) * 50 >= 1000 ? (Math.round(v / 50) * 50).toLocaleString("en-US") : Math.round(v / 10) * 10}`;
+const niceUsd = (v: number, range: number) =>
+  range >= 20 ? `$${(Math.round(v / (range >= 200 ? 50 : 5)) * (range >= 200 ? 50 : 5)).toLocaleString("en-US")}` : `$${v.toFixed(range >= 2 ? 1 : 2)}`;
 
 /** Equity vs buy-and-hold (both in USD from the same start) with a drawdown panel. Hover for a readout. */
 export function EquityChart({ points }: { points: EquityPoint[] }) {
@@ -38,6 +39,8 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
   }, [points]);
 
   const n = points.length;
+  const short = points[n - 1].t - points[0].t < 3 * 86_400_000;
+  const label = short ? timeLabel : dateLabel;
   const i = hover ?? n - 1;
   const yOf = (v: number) => ((d.hi - v) / (d.hi - d.lo)) * 100;
   const ticks = [d.hi - (d.hi - d.lo) * 0.08, (d.hi + d.lo) / 2, d.lo + (d.hi - d.lo) * 0.08];
@@ -52,7 +55,7 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[13.5px]" aria-live="polite">
-        <span className="num text-muted">{dateLabel(points[i].t)}</span>
+        <span className="num text-muted">{label(points[i].t)}</span>
         <span className="flex items-center gap-1.5">
           <span aria-hidden className="h-0.5 w-4 rounded bg-accent" />
           <span className="font-semibold text-muted">Agent</span>
@@ -75,7 +78,7 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
       >
         {ticks.map((t) => (
           <span key={t} className="num pointer-events-none absolute left-0 w-12 -translate-y-1/2 text-right text-[11px] text-muted" style={{ top: `${yOf(t)}%` }}>
-            {niceUsd(t)}
+            {niceUsd(t, d.hi - d.lo)}
           </span>
         ))}
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[210px] w-full">
@@ -101,7 +104,7 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
         ))}
         <div className="num mt-1 flex justify-between text-[11px] text-muted">
           {xTicks.map((k) => (
-            <span key={k}>{dateLabel(points[k].t)}</span>
+            <span key={k}>{label(points[k].t)}</span>
           ))}
         </div>
       </div>

@@ -18,7 +18,7 @@ export const PROTOCOLS: Record<ProtocolId, ProtocolMeta> = {
   drift: { id: "drift", name: "Drift", category: "Perps", color: "#ff8f6b", blurb: "Perpetual futures. Profit is price PnL plus funding received, minus fees; leverage amplifies both directions." },
   marinade: { id: "marinade", name: "Marinade", category: "Liquid staking", color: "#5eead4", blurb: "Liquid staking (mSOL). Profit is staking yield accruing into the token's exchange rate; risks are depeg and validator performance." },
   meteora: { id: "meteora", name: "Meteora", category: "Concentrated LP", color: "#f472b6", blurb: "Dynamic/concentrated liquidity pools. Profit is trading fees minus impermanent loss; out-of-range positions earn nothing." },
-  orca: { id: "orca", name: "Orca", category: "Concentrated LP", color: "#38bdf8", blurb: "Concentrated-liquidity AMM. Same fee-versus-impermanent-loss trade-off as other CLMMs, driven by range choice." },
+  orca: { id: "orca", name: "Orca", category: "Spot swaps / concentrated LP", color: "#38bdf8", blurb: "Concentrated-liquidity AMM. Spot swaps realize price gain or loss minus the pool fee; LP positions trade fees against impermanent loss." },
   pumpfun: { id: "pumpfun", name: "Pump.fun", category: "Launchpad / memecoins", color: "#facc15", blurb: "Bonding-curve token launches. Extremely high variance and survivorship bias — treat any short track record as noise." },
   jito: { id: "jito", name: "Jito", category: "Liquid staking", color: "#a3e635", blurb: "Liquid staking (JitoSOL) with MEV-boosted yield. Profit is staking + MEV rewards; same depeg/validator risks as other LSTs." },
 };
@@ -63,6 +63,12 @@ export const INTERACTIONS: Record<string, InteractionMeta> = {
     title: (i) => `DCA fill ${i.meta.pair ?? ""}`,
     how: "Averaging into a position over time; PnL depends on the path of prices vs the average entry.",
     risks: ["Averaging into a falling asset", "Order expiry / missed fills"],
+    closes: true,
+  },
+  "orca.swap": {
+    title: (i) => `Swapped ${i.meta.pair ?? ""}`,
+    how: "Spot swap in an Orca pool. A sell realizes gain or loss against what the SOL cost; a buy opens a position and only costs fees.",
+    risks: ["Thin devnet liquidity moves the price", "Pool fee on every swap", "Price moves against the position"],
     closes: true,
   },
   "drift.perp_open": {
@@ -142,6 +148,8 @@ export function interactionTitle(i: Interaction): string {
 }
 
 export function isClosing(i: Interaction): boolean {
+  // A spot swap only counts toward win rate when it realized a gain or loss (a sell), not when it opened a position.
+  if (i.kind === "swap") return i.components.some((c) => c.label === "price");
   return interactionMeta(i.protocol, i.kind)?.closes ?? false;
 }
 

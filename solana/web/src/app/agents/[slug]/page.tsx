@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { CallCard } from "@/components/CallCard";
 import { CopyText } from "@/components/CopyText";
 import { EquityChart } from "@/components/EquityChart";
+import { withoutFlows } from "@/lib/equity";
 import { FollowButton } from "@/components/FollowButton";
 import { AgentGlyph, ProtocolLogo } from "@/components/glyphs";
 import { Info } from "@/components/Info";
@@ -13,7 +14,7 @@ import { PostCard } from "@/components/PostCard";
 import { Tabs } from "@/components/Tabs";
 import { Waterfall } from "@/components/charts";
 import { Empty, EligibleChip, LuckFlag, MetricStrip, MetricTile, Pct, Pnl, ProtocolChip, RuntimeBadge, SectionTitle, VerificationBadge } from "@/components/ui";
-import { getAgent, getCalls, getFeed, getLeaderboard, getMeta } from "@/lib/api";
+import { getAgent, getCalls, getFeed, getLeaderboard } from "@/lib/api";
 import { CHAIN_UI } from "@/lib/chain";
 import { EXPLORER } from "@/lib/config";
 import { domainFor } from "@/lib/forest";
@@ -34,7 +35,7 @@ const TAB_LABEL: Record<TabKey, string> = { overview: "Overview", feed: "Posts",
 export default async function AgentPage(props: PageProps<"/agents/[slug]">) {
   const { slug } = await props.params;
   const sp = await props.searchParams;
-  const [d, meta] = await Promise.all([getAgent(slug), getMeta()]);
+  const d = await getAgent(slug);
   if (!d) notFound();
 
   const tab: TabKey = (TABS as readonly string[]).includes(String(sp.tab)) ? (sp.tab as TabKey) : "overview";
@@ -75,11 +76,7 @@ export default async function AgentPage(props: PageProps<"/agents/[slug]">) {
         <div className="flex items-center gap-1.5">
           <dt>Wallet</dt>
           <dd>
-            {meta.demo ? (
-              <span title="Simulated address"><CopyText value={agent.wallet} display={shortAddr(agent.wallet)} label="wallet address" className="font-bold text-fg" /></span>
-            ) : (
-              <span className="inline-flex items-center gap-1"><CopyText value={agent.wallet} display={shortAddr(agent.wallet)} label="wallet address" className="font-bold text-accent" /><a href={EXPLORER.address(agent.wallet)} target="_blank" rel="noopener noreferrer" className="font-bold text-accent" aria-label="Open in explorer">Explorer</a></span>
-            )}
+            <span className="inline-flex items-center gap-1"><CopyText value={agent.wallet} display={shortAddr(agent.wallet)} label="wallet address" className="font-bold text-fg" /><a href={EXPLORER.address(agent.wallet)} target="_blank" rel="noopener noreferrer" className="font-bold text-accent hover:underline" aria-label="Open this wallet in the explorer">Explorer</a></span>
           </dd>
         </div>
         <div className="flex items-center gap-1.5"><dt>Started</dt><dd className="font-bold text-fg">{dateLabel(agent.startedAt)}</dd></div>
@@ -111,7 +108,7 @@ function Overview({ d, win, base }: { d: AgentDetail; win: WindowKey; base: stri
   const m = d.metrics[win];
   const days = win === "7d" ? 7 : win === "30d" ? 30 : Infinity;
   const cutoff = d.equity[d.equity.length - 1].t - days * DAY;
-  const points = d.equity.filter((p) => p.t >= cutoff - 1);
+  const points = withoutFlows(d.equity.filter((p) => p.t >= cutoff - 1));
   const wf = (l: string) => d.waterfall.find((w) => w.label === l)?.usd ?? 0;
   const trades = d.interactions.length || 1;
   const domain = domainFor([{ lo: m.sharpeLo, hi: m.sharpeHi }]);
@@ -157,7 +154,7 @@ function Overview({ d, win, base }: { d: AgentDetail; win: WindowKey; base: stri
       </div>
 
       <section>
-        <SectionTitle>Equity compared with just holding {CHAIN_UI.benchmark}</SectionTitle>
+        <SectionTitle aside="Deposits and withdrawals are taken out, so only trading shows.">Results compared with just holding {CHAIN_UI.benchmark}</SectionTitle>
         <EquityChart points={points} />
       </section>
 

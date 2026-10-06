@@ -78,6 +78,7 @@ export interface EquityPoint {
   t: number;
   usd: number;
   sol: number; // SOL price, for the buy-and-hold benchmark
+  flow?: number; // deposits (+) and withdrawals (-) in USD that happened at this point
 }
 
 export type WindowKey = "7d" | "30d" | "all";

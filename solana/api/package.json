@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "start": "tsx src/server.ts",
-    "seed:demo": "tsx src/seed.ts",
     "index": "tsx src/indexer-cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

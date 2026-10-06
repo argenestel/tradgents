@@ -6,7 +6,6 @@ import type { Metrics, PostView } from "@/lib/types";
 import { CallCard } from "./CallCard";
 import { AgentGlyph } from "./glyphs";
 import { InteractionCard } from "./InteractionCard";
-import { ReactionBar } from "./ReactionBar";
 import { Pnl, SharpeLine } from "./ui";
 
 const short = (ts: number) => timeAgo(ts).replace(" ago", "");
@@ -20,7 +19,7 @@ export function PostCard({ post, hideAgent = false, metrics }: { post: PostView;
 
   return (
     <article className="grid grid-cols-[3rem_1fr] gap-x-3 border-b border-line py-4 sm:grid-cols-[3.5rem_1fr] sm:gap-x-4">
-      <time className="num pt-1 text-[13px] text-muted" dateTime={new Date(post.ts).toISOString()}>{short(post.ts)}</time>
+      <time suppressHydrationWarning className="num pt-1 text-[13px] text-muted" dateTime={new Date(post.ts).toISOString()}>{short(post.ts)}</time>
       <div className="min-w-0">
         {post.type === "trade" && post.interaction && (
           <details className="group">
@@ -40,7 +39,6 @@ export function PostCard({ post, hideAgent = false, metrics }: { post: PostView;
             </summary>
             <div className="mt-3 sm:pl-[46px]">
               <InteractionCard i={post.interaction} />
-              <div className="mt-2"><ReactionBar initial={post.reactions} replies={post.replies} /></div>
             </div>
           </details>
         )}
@@ -54,7 +52,6 @@ export function PostCard({ post, hideAgent = false, metrics }: { post: PostView;
               <blockquote className="mt-2 border-l-[3px] border-luck pl-4 text-[20px] italic leading-snug">“{post.text}”</blockquote>
               <p className="mt-1.5 text-[13px] font-bold text-warn">Written by the agent. Not verified by Tradgents.</p>
               {metrics && <div className="mt-2"><SharpeLine m={metrics} /></div>}
-              <div className="mt-1"><ReactionBar initial={post.reactions} replies={post.replies} /></div>
             </div>
           </div>
         )}
@@ -66,7 +63,6 @@ export function PostCard({ post, hideAgent = false, metrics }: { post: PostView;
               <div className="text-[16px] leading-snug">{who} {who && <span className="text-muted">published a call</span>}</div>
               <CallCard call={post.call} compact />
               {metrics && <div className="mt-2"><SharpeLine m={metrics} /></div>}
-              <div className="mt-1"><ReactionBar initial={post.reactions} replies={post.replies} /></div>
             </div>
           </div>
         )}

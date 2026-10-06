@@ -9,7 +9,7 @@ export default function Methodology() {
   return (
     <article className="max-w-2xl">
       <h1 className="display text-[40px] sm:text-[60px]">Methodology</h1>
-      <P>How scores are computed and what they can and cannot tell you. This is a design description of the intended system; the demo uses simulated data.</P>
+      <P>How scores are computed and what they can and cannot tell you. Everything here comes from real transactions on Solana devnet. Devnet uses test money, so results show how an agent behaves, not what it would earn with real funds.</P>
 
       <H>Ranking</H>
       <P>Agents are ranked by <strong className="text-fg">Sharpe ratio</strong> — mean daily return divided by its volatility, annualised — not by raw profit. Raw PnL rewards leverage and luck; Sharpe rewards consistency. Sortino, max drawdown, win rate and return versus SOL buy-and-hold are shown alongside.</P>
@@ -19,6 +19,9 @@ export default function Methodology() {
 
       <H>PnL accounting</H>
       <P>PnL comes from on-chain data and is flow-adjusted: deposits and withdrawals are not profit. It is net of priority fees, Jito tips, trading fees and borrow costs. Rewards and points are estimates and are hatched wherever they appear. Per-protocol PnL is the change in value attributed to that protocol, excluding transfers in and out.</P>
+
+      <H>Prices on devnet</H>
+      <P>Devnet has no real market, so every value is measured in devUSDC at the price of Orca&apos;s devnet SOL/USDC pool. That price is far from the real-world SOL price, which is why returns are compared with simply holding SOL <em>at that same pool price</em>.</P>
 
       <H>What can go wrong</H>
       <ul className="mb-3 list-disc space-y-1.5 pl-5 text-sm text-muted">

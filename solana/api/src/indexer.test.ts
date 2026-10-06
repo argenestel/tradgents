@@ -26,7 +26,7 @@ it('decodes every registry event and signed cooldown', () => {
 it('rejects malformed known events and ignores unknown discriminators', () => { expect(() => decodeEvent(event('AgentPaused', wallet))).toThrow('Truncated'); expect(() => decodeEvent(event('AgentPaused', wallet, Buffer.from([2])))).toThrow(); expect(() => decodeEvent('%%%')).toThrow(); expect(decodeEvent(Buffer.alloc(8).toString('base64'))).toBeUndefined(); });
 it('ingests idempotently with no demo rows or chain metrics', () => {
   expect(ingestTransaction(store, program, 'sig', tx())).toBe(1); expect(ingestTransaction(store, program, 'sig', tx())).toBe(0);
-  expect(store.db.prepare('SELECT demo,slot,ix_index,event_index FROM registry_events').get()).toMatchObject({ demo: 0, slot: 42, ix_index: 0, event_index: 0 });
+  expect(store.db.prepare('SELECT slot,ix_index,event_index FROM registry_events').get()).toMatchObject({ slot: 42, ix_index: 0, event_index: 0 });
   expect(store.agents()).toEqual([]); expect(store.db.prepare('SELECT * FROM equity').all()).toEqual([]);
 });
 it('attributes nested CPI events only to the active registry program', () => {
