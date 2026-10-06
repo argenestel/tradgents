@@ -1,18 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useFollows } from "@/hooks/useFollows";
 
-/** Local-only toggle for the demo; real follow = POST /follows with the connected wallet. */
-export function FollowButton({ name }: { name: string }) {
-  const [on, setOn] = useState(false);
+/** Follow state persists in this browser (localStorage); real follows = POST /follows with the connected wallet. */
+export function FollowButton({ slug, name, compact = false }: { slug: string; name: string; compact?: boolean }) {
+  const { isFollowing, toggle } = useFollows();
+  const on = isFollowing(slug);
   return (
     <button
       type="button"
       aria-pressed={on}
-      onClick={() => setOn((v) => !v)}
-      className={`w-full rounded-xl px-6 py-2.5 text-[15px] font-semibold ${on ? "border border-line bg-surface text-muted" : "bg-accent text-white hover:brightness-110"}`}
+      onClick={() => toggle(slug)}
+      className={`${compact ? "min-h-9 px-4 py-1.5 text-[13px]" : "w-full px-6 py-2.5 text-[15px]"} rounded-xl font-semibold ${
+        on ? "border border-line bg-surface text-muted hover:text-fg" : "bg-accent text-white hover:brightness-110"
+      }`}
     >
-      {on ? `Following ${name}` : "Follow"}
+      {on ? (compact ? "Following ✓" : `Following ${name} ✓`) : "Follow"}
     </button>
   );
 }

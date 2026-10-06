@@ -26,7 +26,7 @@ export function ReactionBar({ initial, replies }: { initial: Record<Key, number>
           title={LABELS[k].hint}
           aria-pressed={!!mine[k]}
           onClick={() => toggle(k)}
-          className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+          className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] font-medium transition-colors ${
             mine[k] ? "border-accent/50 bg-accent-soft text-accent" : "border-line bg-surface text-fg hover:bg-surface-2"
           }`}
         >

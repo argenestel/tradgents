@@ -9,7 +9,9 @@ import { PermissionsTab } from "@/components/PermissionsTab";
 import { PostCard } from "@/components/PostCard";
 import { Tabs } from "@/components/Tabs";
 import { Waterfall } from "@/components/charts";
+import { CopyText } from "@/components/CopyText";
 import { AgentGlyph, ProtocolLogo } from "@/components/glyphs";
+import { Info } from "@/components/Info";
 import { Card, Disclaimer, Empty, EligibleChip, LuckFlag, MetricStrip, MetricTile, Pct, Pnl, ProtocolChip, RuntimeBadge, SectionTitle, VerificationBadge } from "@/components/ui";
 import { getAgent, getCalls, getFeed, getLeaderboard } from "@/lib/api";
 import { CHAIN_UI } from "@/lib/chain";
@@ -42,41 +44,44 @@ export default async function AgentPage(props: PageProps<"/agents/[slug]">) {
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-wrap items-center justify-between gap-6">
-        <div className="flex min-w-0 items-center gap-6">
-          <AgentGlyph name={agent.name} size={116} />
+      <section className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+        <div className="flex min-w-0 items-center gap-4 sm:gap-6">
+          <span className="shrink-0 sm:hidden"><AgentGlyph name={agent.name} size={72} /></span>
+          <span className="hidden shrink-0 sm:block"><AgentGlyph name={agent.name} size={116} /></span>
           <div className="min-w-0">
-            <h1 className="display text-[52px] font-semibold leading-none">{agent.name}</h1>
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <h1 className="display break-words text-[34px] font-semibold leading-none sm:text-[52px]">{agent.name}</h1>
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 sm:mt-3">
               <RuntimeBadge runtime={agent.runtime} />
               <VerificationBadge level={agent.verification} />
               <EligibleChip eligible={m.eligible} />
               {agent.status === "stale" && <span className="rounded-md bg-warn-bg px-1.5 py-0.5 text-[11px] font-medium text-warn">stale</span>}
             </div>
-            <p className="mt-2 max-w-xl text-[16px] text-muted">{agent.bio}</p>
-            {noPolicy && (
-              <Link href={`${base}?tab=permissions`} className="mt-2 inline-block text-[13px] font-medium text-loss hover:underline">⚠ Full-power key — no spending policy</Link>
-            )}
           </div>
         </div>
-        <div className="flex items-stretch gap-6">
-          <div className="hidden border-l border-line pl-6 text-[15px] text-muted sm:block">
-            <div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch sm:gap-6">
+          <div className="text-[14px] text-muted sm:border-l sm:border-line sm:pl-6 sm:text-[15px]">
+            <div className="flex items-center gap-1">
               Wallet{" "}
               {IS_DEMO ? (
-                <span className="num font-medium text-accent" title="Demo address">{shortAddr(agent.wallet)}</span>
+                <span className="text-accent" title="Demo address"><CopyText value={agent.wallet} display={shortAddr(agent.wallet)} label="wallet address" className="font-medium" /></span>
               ) : (
-                <a href={EXPLORER.address(agent.wallet)} target="_blank" rel="noopener noreferrer" className="num font-medium text-accent">{shortAddr(agent.wallet)} ↗</a>
+                <span className="inline-flex items-center gap-1"><CopyText value={agent.wallet} display={shortAddr(agent.wallet)} label="wallet address" className="font-medium text-accent" /><a href={EXPLORER.address(agent.wallet)} target="_blank" rel="noopener noreferrer" className="text-accent" aria-label="Open in explorer">↗</a></span>
               )}
             </div>
             <div className="mt-1">{m.days} days live <span aria-hidden>•</span> {m.trades} trades</div>
           </div>
-          <div className="flex w-[190px] flex-col gap-2.5 border-l border-line pl-6">
-            <FollowButton name={agent.name} />
-            <Link href={`${base}?tab=trades`} className="rounded-xl border border-accent px-6 py-2.5 text-center text-[15px] font-semibold text-accent hover:bg-accent-soft">Copy trades</Link>
+          <div className="flex gap-2.5 sm:w-[190px] sm:flex-col sm:border-l sm:border-line sm:pl-6">
+            <div className="flex-1 sm:flex-none"><FollowButton slug={agent.slug} name={agent.name} /></div>
+            <Link href={`${base}?tab=trades`} className="flex-1 rounded-xl border border-accent px-6 py-2.5 text-center text-[15px] font-semibold text-accent hover:bg-accent-soft sm:flex-none">Copy trades</Link>
           </div>
         </div>
       </section>
+      <div className="-mt-2">
+        <p className="max-w-2xl text-[15px] text-muted sm:text-[16px]">{agent.bio}</p>
+        {noPolicy && (
+          <Link href={`${base}?tab=permissions`} className="mt-2 inline-block text-[13px] font-medium text-loss hover:underline">⚠ Full-power key — no spending policy</Link>
+        )}
+      </div>
 
       <Tabs items={TABS.map((t) => ({ href: t === "overview" ? base : `${base}?tab=${t}`, label: t[0].toUpperCase() + t.slice(1), active: tab === t }))} />
 
@@ -93,7 +98,7 @@ export default async function AgentPage(props: PageProps<"/agents/[slug]">) {
 }
 
 function Overview({ d, win, base }: { d: AgentDetail; win: WindowKey; base: string }) {
-  const m = d.metrics.all;
+  const m = d.metrics[win];
   const days = win === "7d" ? 7 : win === "30d" ? 30 : Infinity;
   const cutoff = d.equity[d.equity.length - 1].t - days * DAY;
   const points = d.equity.filter((p) => p.t >= cutoff - 1);
@@ -104,9 +109,20 @@ function Overview({ d, win, base }: { d: AgentDetail; win: WindowKey; base: stri
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-[13px] font-medium text-muted">Showing {win === "all" ? "all time" : `the last ${win}`}</h2>
+        <div className="inline-flex rounded-xl border border-line bg-surface p-1" role="group" aria-label="Time window">
+          {(["7d", "30d", "all"] as const).map((w) => (
+            <Link key={w} href={w === "30d" ? base : `${base}?w=${w}`} scroll={false} aria-current={win === w ? "true" : undefined} className={`inline-flex min-h-9 items-center rounded-lg px-4 py-1 text-[14px] font-medium ${win === w ? "bg-accent text-white" : "text-fg hover:bg-surface-2"}`}>
+              {w === "all" ? "All" : w}
+            </Link>
+          ))}
+        </div>
+      </div>
+
       <MetricStrip
         items={[
-          { label: "Sharpe", value: num(m.sharpe, 1), sub: <>95% [{num(m.sharpeLo, 1)}, {num(m.sharpeHi, 1)}]</> },
+          { label: <>Sharpe<Info label="What is Sharpe?">Return per unit of risk. The bracket is a 95% range; if it includes 0, the result could be luck.</Info></>, value: num(m.sharpe, 1), sub: <>95% [{num(m.sharpeLo, 1)}, {num(m.sharpeHi, 1)}]</> },
           { label: "Sortino", value: num(m.sortino, 1) },
           { label: "Return", value: <Pct value={m.returnPct} /> },
           { label: `vs ${CHAIN_UI.benchmark} hold`, value: <Pct value={m.excessPct} /> },
@@ -118,16 +134,7 @@ function Overview({ d, win, base }: { d: AgentDetail; win: WindowKey; base: stri
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
         <Card className="p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <SectionTitle>{`Equity vs buy-and-hold`}</SectionTitle>
-            <div className="inline-flex rounded-xl border border-line p-1" role="group" aria-label="Window">
-              {(["7d", "30d", "all"] as const).map((w) => (
-                <Link key={w} href={w === "30d" ? base : `${base}?w=${w}`} scroll={false} aria-current={win === w ? "true" : undefined} className={`rounded-lg px-4 py-1 text-[14px] font-medium ${win === w ? "bg-accent text-white" : "text-fg hover:bg-surface-2"}`}>
-                  {w === "all" ? "All" : w}
-                </Link>
-              ))}
-            </div>
-          </div>
+          <SectionTitle>Equity vs buy-and-hold</SectionTitle>
           <EquityChart points={points} />
         </Card>
 

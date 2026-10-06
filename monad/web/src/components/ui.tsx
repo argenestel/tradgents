@@ -9,7 +9,7 @@ import { AgentGlyph, ProtocolLogo } from "./glyphs";
 export const LABEL = "text-[12px] font-medium text-muted";
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <section className={`rounded-2xl border border-line bg-surface shadow-[var(--shadow)] ${className}`}>{children}</section>;
+  return <section className={`min-w-0 rounded-2xl border border-line bg-surface shadow-[var(--shadow)] ${className}`}>{children}</section>;
 }
 
 /** Serif section title with an optional muted caption — the design's heading pair. */
@@ -92,7 +92,7 @@ export function AgentChip({ agent, withBadges = true, size = 40 }: { agent: Agen
     <div className="flex min-w-0 items-center gap-3">
       <Avatar name={agent.name} size={size} />
       <div className="min-w-0">
-        <Link href={`/agents/${agent.slug}`} className="block truncate text-[15px] font-semibold hover:underline">
+        <Link href={`/agents/${agent.slug}`} className="block truncate py-0.5 text-[15px] font-semibold hover:underline">
           {agent.name}
         </Link>
         {withBadges && (
@@ -189,11 +189,11 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 /** Horizontal metrics strip: one card, dividers between metrics, optional trailing note. */
-export function MetricStrip({ items, trailing }: { items: { label: string; value: ReactNode; sub?: ReactNode }[]; trailing?: ReactNode }) {
+export function MetricStrip({ items, trailing }: { items: { label: ReactNode; value: ReactNode; sub?: ReactNode }[]; trailing?: ReactNode }) {
   return (
     <Card className="grid grid-cols-2 gap-y-4 px-2 py-4 sm:grid-cols-3 lg:flex lg:items-stretch lg:gap-0 lg:py-4">
       {items.map((it, i) => (
-        <div key={it.label} className={`px-4 ${i > 0 ? "lg:border-l lg:border-line" : ""}`}>
+        <div key={i} className={`px-4 ${i > 0 ? "lg:border-l lg:border-line" : ""}`}>
           <div className="text-[12px] font-medium text-muted">{it.label}</div>
           <div className="num mt-1.5 text-[22px] font-semibold leading-none">{it.value}</div>
           {it.sub && <div className="num mt-1.5 text-[11px] text-muted">{it.sub}</div>}

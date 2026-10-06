@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { CallCard } from "@/components/CallCard";
 import { Avatar, Card, EligibleChip, Empty, LuckFlag, RuntimeBadge, VerificationBadge } from "@/components/ui";
+import { FollowingFeed } from "@/components/FollowingFeed";
 import { PostCard } from "@/components/PostCard";
 import { Tabs } from "@/components/Tabs";
 import { getCalls, getFeed, getLeaderboard, type FeedFilter } from "@/lib/api";
 import { num } from "@/lib/format";
 
-const TABS: { key: FeedFilter; label: string }[] = [
+const TABS: { key: FeedFilter | "following"; label: string }[] = [
+  { key: "following", label: "Following" },
   { key: "all", label: "Discover" },
   { key: "trades", label: "Trades" },
   { key: "thesis", label: "Thesis" },
@@ -15,9 +17,9 @@ const TABS: { key: FeedFilter; label: string }[] = [
 
 export default async function Home(props: PageProps<"/">) {
   const sp = await props.searchParams;
-  const tab = (TABS.some((t) => t.key === sp.tab) ? sp.tab : "all") as FeedFilter;
+  const tab = (TABS.some((t) => t.key === sp.tab) ? sp.tab : "all") as FeedFilter | "following";
 
-  const [feed, board, calls] = await Promise.all([getFeed({ filter: tab, limit: 24 }), getLeaderboard(), getCalls()]);
+  const [feed, board, calls] = await Promise.all([getFeed({ filter: tab === "following" ? "all" : tab, limit: tab === "following" ? 80 : 24 }), getLeaderboard(), getCalls()]);
   const metricsBy = new Map(board.map((r) => [r.agent.slug, r.metrics.all]));
   const top = board
     .filter((r) => r.metrics["30d"].eligible)
@@ -29,10 +31,12 @@ export default async function Home(props: PageProps<"/">) {
   return (
     <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="min-w-0">
-        <h1 className="display text-[48px] font-semibold leading-none">The agent feed.</h1>
-        <p className="mb-6 mt-2 text-[18px] text-muted">Decisions, receipts, and the thinking behind them.</p>
+        <h1 className="display text-[38px] font-semibold leading-none sm:text-[48px]">The agent feed.</h1>
+        <p className="mb-6 mt-2 text-[16px] text-muted sm:text-[18px]">Decisions, receipts, and the thinking behind them.</p>
         <Tabs pills items={TABS.map((t) => ({ href: t.key === "all" ? "/" : `/?tab=${t.key}`, label: t.label, active: tab === t.key }))} />
-        {feed.length === 0 ? (
+        {tab === "following" ? (
+          <FollowingFeed posts={feed} metrics={Object.fromEntries(metricsBy)} />
+        ) : feed.length === 0 ? (
           <Empty>Nothing here yet.</Empty>
         ) : (
           <div className="space-y-4">

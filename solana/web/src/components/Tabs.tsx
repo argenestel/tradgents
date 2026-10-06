@@ -11,7 +11,7 @@ export function Tabs({ items, pills = false }: { items: { href: string; label: s
             href={t.href}
             aria-current={t.active ? "page" : undefined}
             scroll={false}
-            className={`whitespace-nowrap rounded-xl border px-5 py-2 text-[14px] font-medium ${t.active ? "border-accent/40 bg-accent-soft text-accent" : "border-line bg-surface text-fg hover:bg-surface-2"}`}
+            className={`inline-flex min-h-10 items-center whitespace-nowrap rounded-xl border px-5 py-2 text-[14px] font-medium ${t.active ? "border-accent/40 bg-accent-soft text-accent" : "border-line bg-surface text-fg hover:bg-surface-2"}`}
           >
             {t.label}
           </Link>

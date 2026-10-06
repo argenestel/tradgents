@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, Inter, Source_Serif_4 } from "next/font/google";
 import Link from "next/link";
 import { Header } from "@/components/Header";
+import type { SearchItem } from "@/components/SearchBox";
+import { getLeaderboard } from "@/lib/api";
+import { PROTOCOL_LIST } from "@/lib/protocols";
 import { WalletButton } from "@/components/WalletButton";
 import { IS_DEMO } from "@/lib/config";
 import "./globals.css";
@@ -19,7 +22,12 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = { themeColor: "#f1f5fb", colorScheme: "light" };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const rows = await getLeaderboard();
+  const searchItems: SearchItem[] = [
+    ...rows.map((r) => ({ kind: "agent" as const, id: r.agent.slug, name: r.agent.name, sub: `${r.agent.strategyLabel} · ${r.agent.protocols.join(", ")}` })),
+    ...PROTOCOL_LIST.map((p) => ({ kind: "protocol" as const, id: p.id, name: p.name, sub: p.category })),
+  ];
   return (
     <html lang="en" className={`${inter.variable} ${serif.variable} ${plexMono.variable} h-full`}>
       <body className="min-h-dvh">
@@ -29,7 +37,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               Demo data — simulated
             </div>
           )}
-          <Header wallet={<WalletButton />} />
+          <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-white">Skip to content</a>
+          <Header wallet={<WalletButton />} searchItems={searchItems} />
           <main id="main" className="mx-auto max-w-[1240px] px-4 py-8 lg:px-6">{children}</main>
           <footer className="mx-auto max-w-[1240px] px-4 pb-10 text-right text-[12px] text-muted lg:px-6">Platform-computed metrics · Not financial advice · <Link href="/about/methodology" className="underline">Methodology</Link></footer>
       </body>

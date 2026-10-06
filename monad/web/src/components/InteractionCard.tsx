@@ -5,6 +5,7 @@ import { PROTOCOLS, SPENDER_LABEL, interactionMeta, interactionTitle } from "@/l
 import type { Interaction } from "@/lib/types";
 import { CopyPanel } from "./CopyPanel";
 import { ProtocolLogo, TokenIcon } from "./glyphs";
+import { CopyText } from "./CopyText";
 import { Pct, Pnl } from "./ui";
 
 const cost = (i: Interaction, ...labels: string[]) => i.components.filter((c) => labels.includes(c.label)).reduce((a, c) => a + Math.min(0, c.usd), 0);
@@ -37,8 +38,8 @@ export function InteractionCard({ i, showTime = false }: { i: Interaction; showT
           <span className="flex items-center gap-2"><DocIcon /> Platform-computed trade</span>
           <span className="flex items-center gap-1.5 font-medium text-accent"><ProtocolLogo id={i.protocol} size={18} />{p.name}</span>
         </div>
-        <div className="grid gap-4 px-4 py-4 sm:grid-cols-[1.2fr_1fr_1fr_1fr] sm:items-center">
-          <div className="flex items-center gap-3">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-4 px-4 py-4 sm:grid-cols-[1.2fr_1fr_1fr_1fr] sm:items-center">
+          <div className="col-span-2 flex items-center gap-3 sm:col-span-1">
             <div className="text-center">
               <TokenIcon symbol={from} size={38} />
               <div className="mt-1 text-[12px] font-medium">{from}</div>
@@ -69,16 +70,16 @@ export function InteractionCard({ i, showTime = false }: { i: Interaction; showT
         <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-2.5 text-[12.5px] text-muted">
           <span>Tx</span>
           {IS_DEMO ? (
-            <span className="num text-accent" title="Demo hash — not a real transaction">{shortAddr(i.txHash)} <span className="text-warn">(demo)</span></span>
+            <span className="text-accent" title="Demo hash — not a real transaction"><CopyText value={i.txHash} display={shortAddr(i.txHash)} label="transaction hash" /> <span className="text-warn">(demo)</span></span>
           ) : (
-            <a href={EXPLORER.tx(i.txHash)} target="_blank" rel="noopener noreferrer" className="num text-accent underline">{shortAddr(i.txHash)} ↗</a>
+            <span className="inline-flex items-center gap-1"><CopyText value={i.txHash} display={shortAddr(i.txHash)} label="transaction hash" className="text-accent" /><a href={EXPLORER.tx(i.txHash)} target="_blank" rel="noopener noreferrer" className="text-accent" aria-label="Open in explorer">↗</a></span>
           )}
           {showTime && <span>· {timeAgo(i.ts)}</span>}
           <span className="ml-auto">
             {copyable ? (
               <CopyPanel pair={i.meta.pair ?? "MON/USDC"} protocol={p.name} spender={SPENDER_LABEL[i.protocol]} agentNotionalUsd={i.notionalUsd} ageMinutes={Math.max(1, (MOCK_NOW - i.ts) / 60000)} />
             ) : (
-              <Link href={`/explore/${i.protocol}`} className="text-muted hover:text-fg" title="Copy is available for spot swaps in v1">view only</Link>
+              <Link href={`/explore/${i.protocol}`} className="inline-block py-2 text-muted hover:text-fg" title="Copy is available for spot swaps in v1">view only</Link>
             )}
           </span>
         </div>
