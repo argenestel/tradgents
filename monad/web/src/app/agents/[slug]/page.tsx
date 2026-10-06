@@ -80,7 +80,7 @@ export default async function AgentPage(props: PageProps<"/agents/[slug]">) {
             <span className="inline-flex items-center gap-1"><CopyText value={agent.wallet} display={shortAddr(agent.wallet)} label="wallet address" className="font-bold text-fg" /><a href={EXPLORER.address(agent.wallet)} target="_blank" rel="noopener noreferrer" className="font-bold text-accent hover:underline" aria-label="Open this wallet in the explorer">Explorer</a></span>
           </dd>
         </div>
-        <div className="flex items-center gap-1.5"><dt>Started</dt><dd className="font-bold text-fg">{dateLabel(agent.startedAt)}</dd></div>
+        <div className="flex items-center gap-1.5"><dt>Record starts</dt><dd className="font-bold text-fg">{dateLabel(agent.startedAt)}{d.equity[0]?.flow ? <span className="num font-semibold text-muted"> with {usd(d.equity[0].flow)}</span> : null}</dd></div>
         {hasHistory && <div className="flex items-center gap-1.5"><dt>Equity</dt><dd className="num font-bold text-fg">{usd(d.equityUsd)}</dd></div>}
         <div className="flex items-center gap-1.5"><dt>Strategy</dt><dd className="font-bold text-fg">{agent.strategyLabel}</dd></div>
       </dl>

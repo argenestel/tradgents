@@ -73,12 +73,12 @@ export function createApp(deps:AppDeps):Hono<{Variables:{requestId:string}}> {
   });
   app.get('/v1/meta',async c=>{
     const [counts,indexed,priceHealth,head,safe]=await Promise.all([store.statsCount(),store.indexerHead(),store.requiredPriceHealth(),deps.client?finalizedBlockNumber(deps.client):Promise.resolve(undefined),deps.client?safeBlockNumber(deps.client):Promise.resolve(undefined)]);
-    const lag=head===undefined?null:Math.max(0,Number(head)-indexed),pricesHealthy=['MON','USDC'].every(token=>priceHealth[token]?.quality==='oracle'&&now()-priceHealth[token].tsMs<=config.priceStaleMs);
+    const lag=head===undefined?null:Math.max(0,Number(head)-indexed),pricesHealthy=priceHealth.MON?.quality==='oracle'&&priceHealth.USDC?.quality==='oracle'&&now()-priceHealth.MON.tsMs<=config.monPriceStaleMs&&now()-priceHealth.USDC.tsMs<=config.usdcPriceStaleMs;
     return c.json({chainId:config.chainId,registry:config.registryAddress,priceSources:[{id:'pyth-monad-onchain',quality:pricesHealthy?'oracle':'estimated-or-stale',feedIds:{MON:config.monadPriceFeedId,USDC:config.usdcPriceFeedId}}],indexerLag:{indexedFinalizedBlock:indexed,finalizedBlock:head===undefined?null:Number(head),safeBlock:safe===undefined?null:Number(safe),unconfirmedBlocks:safe===undefined?null:Math.max(0,Number(safe)-indexed),lagBlocks:lag,stalePrices:!pricesHealthy},counts});
   });
   app.get('/v1/leaderboard',async c=>{
     const t=now(),[indexed,prices,head]=await Promise.all([store.indexerHead(),store.requiredPriceHealth(),deps.client?finalizedBlockNumber(deps.client):Promise.resolve(undefined)]);
-    const healthy=head!==undefined&&Number(head)-indexed<=config.indexerMaxLagBlocks&&['MON','USDC'].every(token=>prices[token]?.quality==='oracle'&&t-prices[token].tsMs<=config.priceStaleMs);
+    const healthy=head!==undefined&&Number(head)-indexed<=config.indexerMaxLagBlocks&&prices.MON?.quality==='oracle'&&prices.USDC?.quality==='oracle'&&t-prices.MON.tsMs<=config.monPriceStaleMs&&t-prices.USDC.tsMs<=config.usdcPriceStaleMs;
     return c.json(healthy?await store.leaderboard(t,config.priceStaleMs):[]);
   });
   app.get('/v1/agents/:slug',async c=>{const d=await store.detail(c.req.param('slug'),now());return d?c.json(d):c.json({error:'not found'},404);});
@@ -107,7 +107,7 @@ export function createApp(deps:AppDeps):Hono<{Variables:{requestId:string}}> {
     const agent:Agent={slug:b.slug,name:b.name,bio:b.bio,runtime:b.runtime as RuntimeId,verification:'wallet_signed',strategyLabel:b.strategyLabel,wallet:wallet.toLowerCase(),owner:owner.toLowerCase(),accountType:b.accountType as AccountType,protocols:b.protocols,startedAt:opening.tsMs,startCapitalUsd:snapshotEquity(opening.balances,opening.prices,opening.tokenDecimals),status:'live',bondMon:0,policy:{status:'none',allowedProtocols:[],perTradeCapUsd:0,dailyCapUsd:0,usedTodayUsd:0,expiresAt:0,changes:[]},approvals:[],fingerprint:{avgHoldHours:0,avgLeverage:1,tradesPerDay:0}};
     await store.tx(async s=>{
       if(!await s.hitRateLimit(owner.toLowerCase(),'register',86_400_000,5,t))throw new HTTPException(429,{message:'rate limit exceeded'});
-      await s.saveRegistration(agent,opening,{wallet:wallet.toLowerCase(),signature:b.signature,messageHash:contentHash(JSON.stringify({...message,nonce:b.nonce.toString(),deadline:b.deadline.toString()})),sigKind:kind,now:t},b.nonce);
+      await s.saveRegistration(agent,opening,{wallet:wallet.toLowerCase(),signature:b.signature,messageHash:contentHash(JSON.stringify({...message,nonce:b.nonce.toString(),deadline:b.deadline.toString()})),sigKind:kind,now:t,expiresMs:Number(b.deadline)*1000},b.nonce);
     });
     return c.json(await store.detail(agent.slug,t),201);
   });
@@ -118,7 +118,7 @@ export function createApp(deps:AppDeps):Hono<{Variables:{requestId:string}}> {
     const wallet=addrValue(b.agentWallet),message={agentWallet:wallet,contentHash:contentHash(b.text),nonce:b.nonce,deadline:b.deadline};
     await verifyTyped({address:wallet,domain:domain(),types:POST_TYPES,primaryType:'Post',message,signature:b.signature as Hex,client:deps.client});
     const id=randomUUID(),post:Post={id,ts:t,agentSlug:agent.slug,type:b.type,text:b.text,reactions:{useful:0,sharp:0,fade:0},replies:0};
-    await store.tx(async s=>{if(!await s.hitRateLimit(agent.wallet,'posts',3_600_000,30,t))throw new HTTPException(429,{message:'rate limit exceeded'});await s.consumeNonce(wallet,b.nonce,t);await s.insertPost(post);});
+    await store.tx(async s=>{if(!await s.hitRateLimit(agent.wallet,'posts',3_600_000,30,t))throw new HTTPException(429,{message:'rate limit exceeded'});await s.consumeNonce(wallet,b.nonce,t,Number(b.deadline)*1000);await s.insertPost(post);});
     return c.json(post,201);
   });
   app.post('/v1/calls',async c=>{
@@ -130,7 +130,7 @@ export function createApp(deps:AppDeps):Hono<{Variables:{requestId:string}}> {
     const message={agentWallet:wallet,contentHash:contentHash(canonical),nonce:b.nonce,deadline:b.deadline};
     await verifyTyped({address:wallet,domain:domain(),types:CALL_TYPES,primaryType:'Call',message,signature:b.signature as Hex,client:deps.client});
     const id=randomUUID(),call:Call={id,agentSlug:agent.slug,market:b.market,direction:b.direction,entry:b.entry,target:b.target,stop:b.stop,createdAt:t,expiresAt:b.expiresAt,status:'open',traded:false,rationale:b.rationale};
-    await store.tx(async s=>{if(!await s.hitRateLimit(agent.wallet,'calls',86_400_000,20,t))throw new HTTPException(429,{message:'rate limit exceeded'});await s.consumeNonce(wallet,b.nonce,t);await s.insertCall(call);await s.insertPost({id:`c-${id}`,ts:t,agentSlug:agent.slug,type:'call',callId:id,reactions:{useful:0,sharp:0,fade:0},replies:0});});
+    await store.tx(async s=>{if(!await s.hitRateLimit(agent.wallet,'calls',86_400_000,20,t))throw new HTTPException(429,{message:'rate limit exceeded'});await s.consumeNonce(wallet,b.nonce,t,Number(b.deadline)*1000);await s.insertCall(call);await s.insertPost({id:`c-${id}`,ts:t,agentSlug:agent.slug,type:'call',callId:id,reactions:{useful:0,sharp:0,fade:0},replies:0});});
     return c.json(call,201);
   });
   return app;

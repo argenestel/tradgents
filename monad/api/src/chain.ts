@@ -17,9 +17,15 @@ export async function verifyChainDeployment(client:PublicClient,cfg:Pick<Config,
   const code=await client.getCode({address:cfg.registryAddress});
   if(!code||code==='0x')throw new Error(`REGISTRY_ADDRESS ${cfg.registryAddress} has no deployed bytecode on chain ${chainId}`);
 }
+const DECIMALS_ABI=[{type:'function',name:'decimals',stateMutability:'view',inputs:[],outputs:[{type:'uint8'}]}] as const;
+export async function verifyUsdcDecimals(client:PublicClient,expected=6):Promise<void> {
+  const chainId=await client.getChainId();if(chainId!==143)throw new Error(`USDC decimals must be verified on Monad chain 143, got ${chainId}`);
+  const decimals=Number(await client.readContract({address:TOKEN_CATALOG.USDC.address,abi:DECIMALS_ABI,functionName:'decimals'}));
+  if(decimals!==expected||decimals!==6)throw new Error(`on-chain Monad USDC decimals are ${decimals}; expected policy/config value 6`);
+}
 
 const PYTH_ABI=[{type:'function',name:'getPriceUnsafe',stateMutability:'view',inputs:[{name:'id',type:'bytes32'}],outputs:[{type:'tuple',components:[{name:'price',type:'int64'},{name:'conf',type:'uint64'},{name:'expo',type:'int32'},{name:'publishTime',type:'uint256'}]}]}] as const;
-export interface OraclePrice { usd:number;tsMs:number;quality:'oracle'|'estimated';source:string }
+export interface OraclePrice { usd:number;tsMs:number;quality:'oracle'|'estimated';source:string;liquidityUsd?:number }
 export async function readPythPrice(client:PublicClient,feedId:`0x${string}`,now=Date.now(),staleAfterMs=3_600_000,blockNumber?:bigint):Promise<OraclePrice> {
   const p=await client.readContract({address:PYTH_PRICE_FEED,abi:PYTH_ABI,functionName:'getPriceUnsafe',args:[feedId],...(blockNumber===undefined?{}:{blockNumber})});
   let usd=Number(p.price)*10**p.expo;const tsMs=Number(p.publishTime)*1000;

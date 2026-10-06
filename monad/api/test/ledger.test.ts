@@ -16,6 +16,12 @@ describe('Monad ledger reducer',()=>{
     expect(result.balances.get('USDC')).toBe(105_000_000n);expect(result.interactions).toHaveLength(0);
     expect(result.entries.map(e=>e.kind)).toEqual(['flow','flow']);
   });
+  it('recognizes a WMON wrap from MON/WMON deltas even when the receipt event is missing',()=>{
+    const wrap=tx({hash:'0xa0',from:WALLET,to:WMON,deltas:[{token:'MON',raw:-1_000_000_000_000_000_000n,decimals:18,symbol:'MON'},{token:'WMON',raw:1_000_000_000_000_000_000n,decimals:18,symbol:'WMON'}]});
+    expect(classifyActivity(wrap).kind).toBe('wrap');
+    const result=replayLedger({agentSlug:'a',wallet:WALLET,opening:initial,transactions:[wrap],samples:P});
+    expect(result.unsupportedCount).toBe(0);expect(result.entries.map(e=>e.kind)).toEqual(['wrap','wrap']);expect(result.interactions).toHaveLength(0);
+  });
   it('treats WMON wrapping and unwrapping as neutral inventory moves',()=>{
     const wrap=tx({hash:'0xa1',from:WALLET,to:WMON,value:1_000_000_000_000_000_000n,deltas:[{token:'MON',raw:-1_000_000_000_000_000_000n,decimals:18,symbol:'MON'},{token:'WMON',raw:1_000_000_000_000_000_000n,decimals:18,symbol:'WMON'}],wrap:{kind:'deposit',amount:1_000_000_000_000_000_000n}});
     const unwrap=tx({hash:'0xa2',from:WALLET,to:WMON,deltas:[{token:'WMON',raw:-500_000_000_000_000_000n,decimals:18,symbol:'WMON'},{token:'MON',raw:500_000_000_000_000_000n,decimals:18,symbol:'MON'}],wrap:{kind:'withdrawal',amount:500_000_000_000_000_000n}});
@@ -30,6 +36,25 @@ describe('Monad ledger reducer',()=>{
     expect(r.interactions).toHaveLength(1);expect(r.interactions[0].pnlUsd).toBeCloseTo(-0.0042,6);
     expect(r.entries.some(e=>e.kind==='fee'&&e.deltaRaw===-42_000_000_000_000n)).toBe(true);
     expect(r.gasPaidRaw).toBe(42_000_000_000_000n);
+  });
+  it('seeds opening lots when the caller supplies an empty lot list',()=>{
+    const sell=tx({hash:'0xseed',from:WALLET,to:UNISWAP_V2_ROUTER,deltas:[{token:'WMON',raw:-1_000_000_000_000_000_000n,decimals:18,symbol:'WMON'},{token:'USDC',raw:100_000_000n,decimals:6,symbol:'USDC'}]});
+    const result=replayLedger({agentSlug:'a',wallet:WALLET,opening:{MON:0n,WMON:1_000_000_000_000_000_000n,USDC:0n},openingTsMs:1_000,openingLots:[],transactions:[sell],samples:P});
+    expect(result.interactions[0].pnlUsd).toBeCloseTo(0,6);expect(result.unsupportedCount).toBe(0);
+  });
+  it('prices an unmatched sell at the sale price and flags its basis as unknown',()=>{
+    const sell=tx({hash:'0xunknown-sell',from:WALLET,to:UNISWAP_V2_ROUTER,deltas:[{token:'WMON',raw:-500_000_000_000_000_000n,decimals:18,symbol:'WMON'},{token:'USDC',raw:50_000_000n,decimals:6,symbol:'USDC'}]});
+    const result=replayLedger({agentSlug:'a',wallet:WALLET,opening:{MON:0n,WMON:0n,USDC:0n},openingLots:[],transactions:[sell],samples:P});
+    expect(result.interactions[0].pnlUsd).toBeCloseTo(0,6);expect(result.unsupportedCount).toBe(1);
+    expect(result.entries.some(e=>e.txHash===sell.hash&&e.kind==='unsupported')).toBe(true);expect(result.lots.some(l=>l.token==='WMON')).toBe(false);
+  });
+  it('allocates FIFO lot basis using integer quantities above Number safe-integer range',()=>{
+    const original=18_014_398_509_481_987n,used=9_007_199_254_740_993n,costUsd=1_000_000_000_000;
+    const swap=tx({hash:'0xfifo-precision',from:WALLET,to:UNISWAP_V2_ROUTER,deltas:[{token:'CUSTOM',raw:-used,decimals:0,symbol:'CUSTOM'},{token:'USDC',raw:used*1_000_000n,decimals:6,symbol:'USDC'}]});
+    const result=replayLedger({agentSlug:'a',wallet:WALLET,opening:{CUSTOM:original},openingLots:[{token:'CUSTOM',qtyRaw:original,costUsd,tsMs:1_000,sourceTx:'fixture'}],tokenDecimals:{CUSTOM:0},transactions:[swap],samples:[...P,{token:'CUSTOM',tsMs:1_000,usd:1,source:'fixture',quality:'oracle'}]});
+    const expectedMicros=BigInt(Math.round(costUsd*1_000_000))-(BigInt(Math.round(costUsd*1_000_000))*used/original);
+    expect(result.lots.find(l=>l.token==='CUSTOM')?.qtyRaw).toBe(original-used);
+    expect(result.lots.find(l=>l.token==='CUSTOM')?.costUsd).toBeCloseTo(Number(expectedMicros)/1_000_000,6);
   });
   it('preserves remaining FIFO cost basis across partial lot disposals',()=>{
     const first=tx({hash:'0xs1',from:WALLET,to:UNISWAP_V2_ROUTER,deltas:[{token:'WMON',raw:-1_000_000_000_000_000_000n,decimals:18,symbol:'WMON'},{token:'USDC',raw:110_000_000n,decimals:6,symbol:'USDC'}]});

@@ -15,6 +15,12 @@ export const PRICE_FEEDS={
   USDC:'0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
 } as const;
 
+export const FACTORY_ABI=[{type:'function',name:'getPair',stateMutability:'view',inputs:[{name:'tokenA',type:'address'},{name:'tokenB',type:'address'}],outputs:[{type:'address'}]}] as const;
+export const PAIR_ABI=[
+  {type:'function',name:'token0',stateMutability:'view',inputs:[],outputs:[{type:'address'}]},
+  {type:'function',name:'token1',stateMutability:'view',inputs:[],outputs:[{type:'address'}]},
+  {type:'function',name:'getReserves',stateMutability:'view',inputs:[],outputs:[{name:'reserve0',type:'uint112'},{name:'reserve1',type:'uint112'},{name:'blockTimestampLast',type:'uint32'}]},
+] as const;
 export const ROUTER_ABI=[
   {type:'function',name:'getAmountsOut',stateMutability:'view',inputs:[{name:'amountIn',type:'uint256'},{name:'path',type:'address[]'}],outputs:[{name:'amounts',type:'uint256[]'}]},
   {type:'function',name:'swapExactTokensForTokens',stateMutability:'nonpayable',inputs:[{name:'amountIn',type:'uint256'},{name:'amountOutMin',type:'uint256'},{name:'path',type:'address[]'},{name:'to',type:'address'},{name:'deadline',type:'uint256'}],outputs:[{name:'amounts',type:'uint256[]'}]},

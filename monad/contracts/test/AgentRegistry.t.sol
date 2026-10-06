@@ -174,6 +174,19 @@ contract AgentRegistryTest is Test {
         vm.prank(next); registry.setMinBondWei(2 ether); assertEq(registry.minBondWei(), 2 ether);
     }
 
+    function test_unbondDelayHasMinimumAndOwnershipCannotBeRenounced() public {
+        vm.prank(admin); vm.expectRevert(AgentRegistry.UnbondDelayTooShort.selector); registry.setUnbondDelay(0);
+        vm.prank(admin); vm.expectRevert(AgentRegistry.UnbondDelayTooShort.selector); registry.setUnbondDelay(1 days - 1);
+        vm.prank(admin); registry.setUnbondDelay(1 days); assertEq(registry.unbondDelay(), 1 days);
+        vm.prank(admin); vm.expectRevert(AgentRegistry.RenounceDisabled.selector); registry.renounceOwnership();
+        assertEq(registry.owner(), admin);
+    }
+
+    function test_constructorRejectsZeroUnbondDelay() public {
+        vm.prank(admin); vm.expectRevert(AgentRegistry.UnbondDelayTooShort.selector);
+        new AgentRegistry(guardian, treasury, MIN_BOND, 0);
+    }
+
     function test_accessControlAndSettings() public {
         address stranger = makeAddr("stranger"); vm.prank(stranger); vm.expectRevert(); registry.setMinBondWei(2 ether);
         vm.prank(stranger); vm.expectRevert(); registry.setUnbondDelay(1 days);

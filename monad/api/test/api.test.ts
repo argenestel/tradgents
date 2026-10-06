@@ -44,6 +44,8 @@ describe('API response contract and signed writes',()=>{
     expect((detail.agent as {slug:string}).slug).toBe('fixture-agent');
     expect((detail.metrics as {all:{eligible:boolean}}).all.eligible).toBe(false);
     const store=new Store(db),saved=await store.opening('fixture-agent');expect(saved?.blockNumber).toBe(100);expect(saved?.balances.MON).toBe('1000000000000000000');
+    const openingPoint=await db.query<{equity_usd:string;flow_usd:string}>("select equity_usd,flow_usd from monad.equity_snapshots where agent_slug='fixture-agent'");
+    expect(Number(openingPoint[0].flow_usd)).toBe(100);expect(Number(openingPoint[0].equity_usd)).toBe(100);
     const list=await app.request('/v1/leaderboard');expect(Array.isArray(await list.json())).toBe(true);
     const missing=await app.request('/v1/agents/not-here');expect(missing.status).toBe(404);
   });
@@ -51,7 +53,7 @@ describe('API response contract and signed writes',()=>{
     expect((await register()).status).toBe(201);expect((await register()).status).toBe(409);
     const large=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:' '.repeat(17_000)});expect(large.status).toBe(413);expect(large.headers.get('X-Request-ID')).toBeTruthy();
     const malformed=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:'{'});expect(malformed.status).toBe(400);
-    const store=new Store(db);const nonce=await store.nonce(wallet),deadline=BigInt(Math.floor(clock/1000)+300),text='<script>bad</script>';
+    const store=new Store(db);const nonce=await store.nonce(wallet,clock),deadline=BigInt(Math.floor(clock/1000)+300),text='<script>bad</script>';
     const message={agentWallet:wallet,contentHash:contentHash(text),nonce,deadline};
     const sig=sign('Post',POST_TYPES,message);
     const res=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,text,nonce:nonce.toString(),deadline:deadline.toString(),signature:sig})});expect(res.status).toBe(400);
@@ -59,13 +61,13 @@ describe('API response contract and signed writes',()=>{
   it('records untrusted posts and calls only after typed signatures and nonce checks',async()=>{
     expect((await register()).status).toBe(201);
     const deadline=BigInt(Math.floor(clock/1000)+300),text='I am watching MON volatility.';
-    let nonce=await new Store(db).nonce(wallet);
+    let nonce=await new Store(db).nonce(wallet,clock);
     const pm={agentWallet:wallet,contentHash:contentHash(text),nonce,deadline};
     const postSig=sign('Post',POST_TYPES,pm);
     const post=await app.request('/v1/posts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,text,type:'thesis',nonce:nonce.toString(),deadline:deadline.toString(),signature:postSig})});
     expect(post.status).toBe(201);
     const payload={market:'MON/USD',direction:'long' as const,entry:100,target:110,stop:95,expiresAt:clock+86_400_000,rationale:'Risk is capped.'};
-    nonce=await new Store(db).nonce(wallet);
+    nonce=await new Store(db).nonce(wallet,clock);
     const canonical=JSON.stringify(payload),cm={agentWallet:wallet,contentHash:contentHash(canonical),nonce,deadline};
     const callSig=sign('Call',CALL_TYPES,cm);
     const call=await app.request('/v1/calls',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,...payload,nonce:nonce.toString(),deadline:deadline.toString(),signature:callSig})});

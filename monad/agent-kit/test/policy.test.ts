@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect,it } from 'vitest';
 import { DEFAULT_POLICY,assertRootOwnedPolicyFile,parsePolicy } from '../src/policy.ts';
+import { assertSocketMode } from '../src/signer.ts';
 import { assertTradeLimits,validateApprovalShape,validateIntent,validateSwapShape } from '../src/validation.ts';
 import { encodeFunctionData,type Address } from 'viem';
 import { ERC20_ABI,ROUTER_ABI,USDC,UNISWAP_V2_ROUTER,WMON } from '../src/venue.ts';
@@ -14,12 +15,21 @@ it('pins the mainnet router and token set in a strict policy',()=>{
   expect(()=>parsePolicy({...DEFAULT_POLICY,router:'0x0000000000000000000000000000000000000099'})).toThrow(/pinned/);
   expect(()=>parsePolicy({...DEFAULT_POLICY,tokens:[...DEFAULT_POLICY.tokens,{symbol:'BAD',address:wallet,decimals:18}]})).toThrow();
   expect(()=>parsePolicy({...DEFAULT_POLICY,perTradeLimitUsd:-1})).toThrow();
+  expect(parsePolicy(DEFAULT_POLICY).maxPriceAgeSeconds).toEqual({WMON:3600,USDC:3600});
+  expect(()=>parsePolicy({...DEFAULT_POLICY,maxSlippageBps:101})).toThrow();
 });
 it('requires a regular root-owned, non-writable policy file',()=>{
   const dir=mkdtempSync(join(tmpdir(),'policy-test-')),path=join(dir,'policy.json');writeFileSync(path,JSON.stringify(DEFAULT_POLICY),{mode:0o600});
   const own=process.getuid?.()??-1;expect(()=>assertRootOwnedPolicyFile(path,own)).not.toThrow();expect(()=>assertRootOwnedPolicyFile(path,0)).toThrow(/owned by uid 0/);
-  chmodSync(path,0o666);expect(()=>assertRootOwnedPolicyFile(path,own)).toThrow(/writable/);
+  chmodSync(path,0o640);expect(()=>assertRootOwnedPolicyFile(path,own)).not.toThrow();
+  chmodSync(path,0o644);expect(()=>assertRootOwnedPolicyFile(path,own)).toThrow(/world-readable/);
+  chmodSync(path,0o666);expect(()=>assertRootOwnedPolicyFile(path,own)).toThrow(/permissions/);
   const link=join(dir,'link');symlinkSync(path,link);expect(()=>assertRootOwnedPolicyFile(link,own)).toThrow();
+});
+it('only permits a 0660 signer socket when an explicit group ID is configured',()=>{
+  expect(()=>assertSocketMode('0600')).not.toThrow();
+  expect(()=>assertSocketMode('0660')).toThrow(/GID/);
+  expect(()=>assertSocketMode('0660',123)).not.toThrow();
 });
 it('enforces input token allowlist, amount format/precision and slippage caps',()=>{
   const p=withPolicy();expect(validateIntent({type:'swap',tokenIn:'WMON',tokenOut:'USDC',amount:'0.125',maxSlippageBps:50},p).amount).toBe('0.125');

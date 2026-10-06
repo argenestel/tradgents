@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { SignerPolicy } from './policy.ts';
 import { ERC20_ABI,ROUTER_ABI } from './venue.ts';
 
-export const SwapIntentSchema=z.object({type:z.literal('swap'),tokenIn:z.enum(['WMON','USDC']),tokenOut:z.enum(['WMON','USDC']),amount:z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).max(80),maxSlippageBps:z.number().int().min(1).max(500)}).strict().refine(v=>v.tokenIn!==v.tokenOut,'input and output token must differ');
+export const SwapIntentSchema=z.object({type:z.literal('swap'),tokenIn:z.enum(['WMON','USDC']),tokenOut:z.enum(['WMON','USDC']),amount:z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).max(80),maxSlippageBps:z.number().int().min(1).max(100)}).strict().refine(v=>v.tokenIn!==v.tokenOut,'input and output token must differ');
 export type SwapIntent=z.infer<typeof SwapIntentSchema>;
 export function validateIntent(input:unknown,policy:SignerPolicy):SwapIntent {
   const p=SwapIntentSchema.safeParse(input);if(!p.success)throw new Error(`invalid intent: ${p.error.issues.map(i=>i.message).join('; ')}`);

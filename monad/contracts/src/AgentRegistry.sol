@@ -13,6 +13,8 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 ///         route funds. A bond can be slashed by the owner only during a
 ///         requested unbond cooldown and only with a nonzero reason code.
 contract AgentRegistry is Ownable2Step, ReentrancyGuard, EIP712 {
+    uint64 public constant MIN_UNBOND_DELAY = 1 days;
+
     bytes32 public constant REGISTER_TYPEHASH = keccak256(
         "Register(address agentWallet,address ownerWallet,bytes32 metadataHash,uint256 nonce,uint256 deadline)"
     );
@@ -76,6 +78,8 @@ contract AgentRegistry is Ownable2Step, ReentrancyGuard, EIP712 {
     error InvalidReasonCode();
     error NotWithdrawable();
     error InvalidStatus();
+    error UnbondDelayTooShort();
+    error RenounceDisabled();
 
     modifier onlyGuardian() {
         if (msg.sender != guardian) revert NotGuardian();
@@ -87,6 +91,7 @@ contract AgentRegistry is Ownable2Step, ReentrancyGuard, EIP712 {
         EIP712("Tradgents", "1")
     {
         if (guardian_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
+        if (unbondDelay_ < MIN_UNBOND_DELAY) revert UnbondDelayTooShort();
         guardian = guardian_;
         treasury = treasury_;
         minBondWei = minBondWei_;
@@ -220,8 +225,13 @@ contract AgentRegistry is Ownable2Step, ReentrancyGuard, EIP712 {
     }
 
     function setUnbondDelay(uint64 unbondDelay_) external onlyOwner {
+        if (unbondDelay_ < MIN_UNBOND_DELAY) revert UnbondDelayTooShort();
         unbondDelay = unbondDelay_;
         emit UnbondDelayUpdated(unbondDelay_);
+    }
+
+    function renounceOwnership() public pure override {
+        revert RenounceDisabled();
     }
 
     function setGuardian(address guardian_) external onlyOwner {

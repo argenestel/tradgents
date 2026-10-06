@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync,lstatSync,readFileSync,unlinkSync } from 'node:fs';
+import { closeSync,chownSync,chmodSync,existsSync,fsyncSync,lstatSync,openSync,readFileSync,unlinkSync,writeFileSync } from 'node:fs';
 import { createServer,connect } from 'node:net';
 import { resolve,join } from 'node:path';
 import pino from 'pino';
@@ -12,7 +12,7 @@ import { signTradgentsMessage } from './signed-messages.ts';
 import { executeSwap } from './trade.ts';
 import { UNISWAP_V2_FACTORY,UNISWAP_V2_ROUTER } from './venue.ts';
 
-const envSchema=z.object({MONAD_RPC_URL:z.string().url(),MONAD_CHAIN_ID:z.coerce.number().int().default(143),REGISTRY_ADDRESS:z.string().refine(isAddress),SIGNER_DIR:z.string().min(1),SIGNER_POLICY_FILE:z.string().min(1),SIGNER_KEY_FILE:z.string().min(1),TRADGENTS_SIGNER_SOCKET:z.string().optional(),TRADGENTS_SIGNER_SOCKET_MODE:z.enum(['0600','0660']).default('0600'),LOG_LEVEL:z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info')});
+const envSchema=z.object({MONAD_RPC_URL:z.string().url(),MONAD_CHAIN_ID:z.coerce.number().int().default(143),REGISTRY_ADDRESS:z.string().refine(isAddress),SIGNER_DIR:z.string().min(1),SIGNER_POLICY_FILE:z.string().min(1),SIGNER_KEY_FILE:z.string().min(1),TRADGENTS_SIGNER_SOCKET:z.string().optional(),TRADGENTS_SIGNER_SOCKET_MODE:z.enum(['0600','0660']).default('0600'),TRADGENTS_SIGNER_SOCKET_GID:z.coerce.number().int().nonnegative().optional(),LOG_LEVEL:z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info')});
 const reqSchema=z.discriminatedUnion('type',[
   z.object({type:z.literal('status')}).strict(),
   z.object({type:z.literal('swap'),intent:z.unknown()}).strict(),
@@ -25,26 +25,63 @@ function assertSecretFile(path:string):void {
   if(st.uid!==uid()||(st.mode&0o077)!==0)throw new Error('signer key must be owned by the signer and mode 0600 or stricter');
 }
 function errorMessage(e:unknown):string{return e instanceof Error?e.message:'request rejected';}
+function pidAlive(pid:number):boolean {try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==='EPERM';}}
+export function acquireSignerLock(directory:string):()=>void {
+  const path=join(directory,'signer.lock'),owner=uid();
+  for(let attempt=0;attempt<3;attempt++){
+    let fd:number|undefined;
+    try{fd=openSync(path,'wx',0o600);writeFileSync(fd,`${process.pid}\n`);fsyncSync(fd);closeSync(fd);fd=undefined;
+      return ()=>{try{if(Number(readFileSync(path,'utf8').trim())===process.pid)unlinkSync(path);}catch{}};
+    }catch(error){if(fd!==undefined){closeSync(fd);fd=undefined;try{unlinkSync(path);}catch{}}if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;
+      const st=lstatSync(path);if(st.isSymbolicLink()||!st.isFile()||st.uid!==owner||(st.mode&0o077)!==0)throw new Error('signer lock must be a private signer-owned regular file');
+      const pid=Number(readFileSync(path,'utf8').trim());if(!Number.isSafeInteger(pid)||pid<=0)throw new Error('signer lock is corrupt');
+      if(pidAlive(pid))throw new Error(`another signer process (pid ${pid}) holds SIGNER_DIR/signer.lock`);
+      try{unlinkSync(path);}catch{}
+    }
+  }
+  throw new Error('could not acquire signer lock');
+}
+export function assertSocketMode(mode:'0600'|'0660',gid?:number):void {
+  if(mode==='0660'&&gid===undefined)throw new Error('socket mode 0660 requires TRADGENTS_SIGNER_SOCKET_GID to be explicitly configured');
+}
+export async function assertSocketNotLive(path:string):Promise<void> {
+  if(!existsSync(path))return;
+  const st=lstatSync(path);if(!st.isSocket()||st.uid!==uid())throw new Error('refusing to replace non-owned signer socket path');
+  await new Promise<void>((resolveProbe,reject)=>{
+    const socket=connect(path);let done=false;
+    const finish=(error?:Error)=>{if(done)return;done=true;clearTimeout(timer);socket.destroy();error?reject(error):resolveProbe();};
+    const timer=setTimeout(()=>finish(new Error('could not determine whether existing signer socket is live; refusing to unlink')),500);
+    socket.once('connect',()=>finish(new Error('signer socket already accepts connections; refusing to unlink it')));
+    socket.once('error',error=>{if(['ECONNREFUSED','ENOENT'].includes((error as NodeJS.ErrnoException).code??''))finish();else finish(error);});
+  });
+  if(existsSync(path))unlinkSync(path);
+}
 
 export async function startSigner(env:NodeJS.ProcessEnv=process.env):Promise<()=>Promise<void>> {
   const checked=envSchema.safeParse(env);if(!checked.success)throw new Error(`invalid signer environment: ${checked.error.issues.map(i=>i.message).join('; ')}`);
   const e=checked.data;if(e.MONAD_CHAIN_ID!==143)throw new Error('signer is mainnet-only; MONAD_CHAIN_ID must be 143');
   const dir=resolve(e.SIGNER_DIR),policyPath=resolve(e.SIGNER_POLICY_FILE),keyPath=resolve(e.SIGNER_KEY_FILE),socketPath=resolve(e.TRADGENTS_SIGNER_SOCKET??join(dir,'signer.sock'));
   assertPrivateDirectory(dir,uid());assertRootOwnedPolicyFile(policyPath,0);assertSecretFile(keyPath);
+  assertSocketMode(e.TRADGENTS_SIGNER_SOCKET_MODE,e.TRADGENTS_SIGNER_SOCKET_GID);
   const policy=loadPolicy(policyPath);
   if(policy.chainId!==143||policy.registryAddress.toLowerCase()!==e.REGISTRY_ADDRESS.toLowerCase())throw new Error('policy and signer registry/chain settings do not match');
   const rawKey=readFileSync(keyPath,'utf8').trim();if(!/^0x[0-9a-fA-F]{64}$/.test(rawKey))throw new Error('signer key file must contain a 32-byte 0x-prefixed key');
   const account=privateKeyToAccount(rawKey as `0x${string}`);
   if(account.address.toLowerCase()!==policy.walletAddress.toLowerCase())throw new Error('signer key does not match policy wallet');
+  const releaseLock=acquireSignerLock(dir);let cleanupServer:ReturnType<typeof createServer>|undefined;
+  try {
   const client=createPublicClient({chain:rpcChain,transport:http(e.MONAD_RPC_URL,{timeout:15_000,retryCount:2})});
   const chainId=await client.getChainId();if(chainId!==143)throw new Error(`RPC chain ID ${chainId} is not mainnet 143`);
   for(const [label,address] of [['registry',policy.registryAddress],['router',UNISWAP_V2_ROUTER],['factory',UNISWAP_V2_FACTORY],...policy.tokens.map(t=>[t.symbol,t.address] as const)] as Array<[string,Address]>) {
     const code=await client.getCode({address});if(!code||code==='0x')throw new Error(`${label} has no bytecode at configured chain`);
   }
+  const usdc=policy.tokens.find(t=>t.symbol==='USDC')!;
+  const decimals=Number(await client.readContract({address:usdc.address,abi:[{type:'function',name:'decimals',stateMutability:'view',inputs:[],outputs:[{type:'uint8'}]}] as const,functionName:'decimals'}));
+  if(decimals!==6||decimals!==usdc.decimals)throw new Error(`on-chain USDC decimals ${decimals} do not match policy decimals ${usdc.decimals} (expected 6)`);
   const walletClient=createWalletClient({account,chain:rpcChain,transport:http(e.MONAD_RPC_URL,{timeout:15_000,retryCount:2})});
   const logger=pino({level:e.LOG_LEVEL,redact:{paths:['*.key','*.privateKey','*.authorization','*.signature'],censor:'[REDACTED]'}});
   const ledger=new SpendLedger(dir,policy,uid()),pausePath=join(dir,'PAUSE');
-  if(existsSync(socketPath)){const st=lstatSync(socketPath);if(!st.isSocket()||st.uid!==uid())throw new Error('refusing to replace non-owned signer socket path');unlinkSync(socketPath);}
+  await assertSocketNotLive(socketPath);
   let chain=Promise.resolve();
   const server=createServer(socket=>{
     let buffered='',finished=false;
@@ -68,10 +105,15 @@ export async function startSigner(env:NodeJS.ProcessEnv=process.env):Promise<()=
     });
     socket.on('error',()=>undefined);
   });
-  await new Promise<void>((resolveListen,reject)=>{server.once('error',reject);server.listen(socketPath,()=>{server.removeListener('error',reject);resolveListen();});});
-  const {chmodSync}=await import('node:fs');chmodSync(socketPath,e.TRADGENTS_SIGNER_SOCKET_MODE==='0660'?0o660:0o600);
+  cleanupServer=server;
+  const oldUmask=process.umask(0o177);
+  try{await new Promise<void>((resolveListen,reject)=>{server.once('error',reject);server.listen(socketPath,()=>{server.removeListener('error',reject);resolveListen();});});}
+  finally{process.umask(oldUmask);}
+  if(e.TRADGENTS_SIGNER_SOCKET_MODE==='0660')chownSync(socketPath,-1,e.TRADGENTS_SIGNER_SOCKET_GID!);
+  chmodSync(socketPath,e.TRADGENTS_SIGNER_SOCKET_MODE==='0660'?0o660:0o600);
   logger.info({wallet:account.address,chainId:143,socket:socketPath},'signer daemon ready');
-  return async()=>{await new Promise<void>(resolveClose=>server.close(()=>resolveClose()));try{unlinkSync(socketPath);}catch{}logger.info('signer daemon stopped');};
+  return async()=>{try{await new Promise<void>(resolveClose=>server.close(()=>resolveClose()));}finally{try{unlinkSync(socketPath);}catch{}releaseLock();}logger.info('signer daemon stopped');};
+  }catch(error){if(cleanupServer?.listening)await new Promise<void>(resolveClose=>cleanupServer!.close(()=>resolveClose()));try{unlinkSync(socketPath);}catch{}releaseLock();throw error;}
 }
 
 if(import.meta.url===new URL(`file://${process.argv[1]}`).href){

@@ -50,7 +50,7 @@ export async function openDb(url: string, opts: { max?: number } = {}): Promise<
           if (!row.ok) return undefined;
         }
         let ping:Promise<unknown>|undefined;
-        const heartbeat=setInterval(()=>{if(!ping)ping=conn.unsafe('select 1').then(()=>undefined).catch(error=>{opts?.onLost?.(error);}).finally(()=>{ping=undefined;});},10_000);
+        const heartbeat=setInterval(()=>{if(!ping)ping=conn.unsafe('select 1').then(()=>undefined).catch(error=>{opts?.onLost?.(error);}).finally(()=>{ping=undefined;});},1_000);
         heartbeat.unref?.();
         try { return await fn(); } finally { clearInterval(heartbeat);if(ping)await ping;try{await conn.unsafe('select pg_advisory_unlock($1)', [key]);}catch(error){opts?.onLost?.(error);} }
       } finally { conn.release(); }

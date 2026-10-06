@@ -12,7 +12,7 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["node"],
-    "rootDir": "."
+    "rootDir": ".."
   },
   "include": ["src", "test"]
 }

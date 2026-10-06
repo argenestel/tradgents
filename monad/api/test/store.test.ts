@@ -11,13 +11,27 @@ it('stores agents, openings, prices, nonces and rolling limits asynchronously',a
   expect((await s.agentByWallet(agent.wallet))?.slug).toBe(agent.slug);expect((await s.opening(agent.slug))?.balances.MON).toBe('100');
   await s.putPriceSample({token:'MON',tsMs:1000,usd:0.5,source:'fixture',quality:'oracle'});await s.putPriceSample({token:'MON',tsMs:2000,usd:0.7,source:'fixture',quality:'oracle'});
   expect(await s.nearestPrice('MON',1500)).toMatchObject({usd:0.5,tsMs:1000});
-  expect(await s.nonce(agent.wallet)).toBe(0n);await s.consumeNonce(agent.wallet,0n,1000);expect(await s.nonce(agent.wallet)).toBe(1n);
+  expect(await s.nonce(agent.wallet,1000)).toBe(0n);await s.consumeNonce(agent.wallet,0n,1000);expect(await s.nonce(agent.wallet,1000)).toBe(1n);
   await expect(s.consumeNonce(agent.wallet,0n,1001)).rejects.toThrow(/nonce/);
   await s.putEquity(agent.slug,{t:2000,usd:20,sol:0.5,flow:1},11,{MON:'20'});
   await s.putEquity(agent.slug,{t:2000,usd:21,sol:0.5,flow:2},12,{MON:'21'});
   expect(await db.query('select block_number from monad.equity_snapshots where agent_slug=$1 order by block_number',[agent.slug])).toEqual([{block_number:11},{block_number:12}]);
   expect(await s.latestBalances(agent.slug)).toEqual({MON:'21'});
   expect(await s.hitRateLimit(agent.wallet,'post',1000,1,1000)).toBe(true);expect(await s.hitRateLimit(agent.wallet,'post',1000,1,1001)).toBe(false);
+  await db.close();
+});
+it('persists drift state, deduplicates replay entries, and preserves the true opening flow',async()=>{
+  const db=await openDb('memory:');await migrate(db);const s=new Store(db);
+  const opening={blockNumber:10,blockHash:'0xopen',tsMs:1000,balances:{MON:'20000000000000000000'},prices:{MON:0.5},priceQuality:{MON:'oracle' as const}};
+  await s.putIndexedRegistration({...agent,startCapitalUsd:999},opening);
+  expect((await s.agent(agent.slug))?.startCapitalUsd).toBe(10);
+  let rows=await db.query<{equity_usd:string;flow_usd:string}>('select equity_usd,flow_usd from monad.equity_snapshots where agent_slug=$1',[agent.slug]);
+  expect(Number(rows[0].flow_usd)).toBe(agent.startCapitalUsd);expect(Number(rows[0].equity_usd)).toBe(agent.startCapitalUsd);
+  const entry={agentSlug:agent.slug,txHash:'0xabc',blockNumber:11,tsMs:2000,token:'MON',deltaRaw:-5n,kind:'swap' as const};
+  await s.insertLedger(entry);await s.insertLedger({...entry,deltaRaw:-7n});
+  expect(await db.query('select delta_raw from monad.ledger_entries where agent_slug=$1 and tx_hash=$2',[agent.slug,'0xabc'])).toEqual([{delta_raw:'-7'}]);
+  await s.setIntegrityDrift(agent.slug,true,{MON:{replayed:'10',chain:'9'}},3000);
+  expect(await new Store(db).integrityDrifted(agent.slug)).toBe(true);
   await db.close();
 });
 it('keeps database writes parameterized and typed JSON payloads round-trip',async()=>{

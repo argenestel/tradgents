@@ -19,8 +19,8 @@ export async function snapshotWallet(client:PublicClient,wallet:Address,cfg:Conf
   const block=await client.getBlock({blockTag:'finalized'});
   const balances=await readWalletBalances(client,wallet,block.number,cfg.trackedTokens);
   const [mon,usdc]=await Promise.all([
-    readPythPrice(client,cfg.monadPriceFeedId,now,cfg.priceStaleMs,block.number),
-    readPythPrice(client,cfg.usdcPriceFeedId,now,cfg.priceStaleMs,block.number),
+    readPythPrice(client,cfg.monadPriceFeedId,now,cfg.monPriceStaleMs,block.number),
+    readPythPrice(client,cfg.usdcPriceFeedId,now,cfg.usdcPriceStaleMs,block.number),
   ]);
   const prices={MON:mon.usd,WMON:mon.usd,USDC:usdc.usd};
   return {blockNumber:Number(block.number),blockHash:block.hash??'0x',tsMs:Number(block.timestamp)*1000,balances,tokenDecimals:Object.fromEntries(cfg.trackedTokens.map(t=>[t.address.toLowerCase(),t.decimals])),prices,priceQuality:{MON:mon.quality,WMON:mon.quality,USDC:usdc.quality}};

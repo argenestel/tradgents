@@ -18,6 +18,9 @@ const envSchema = z.object({
   INDEXER_POLL_MS: z.coerce.number().int().min(300).default(1000),
   INDEXER_MAX_LAG_BLOCKS: z.coerce.number().int().positive().default(1200),
   PRICE_STALE_MS: z.coerce.number().int().positive().default(3_600_000),
+  MONAD_PRICE_STALE_MS: z.coerce.number().int().positive().optional(),
+  USDC_PRICE_STALE_MS: z.coerce.number().int().positive().optional(),
+  MIN_LIQUIDITY_USD: z.coerce.number().positive().finite().default(10_000),
   MONAD_PRICE_FEED_ID: z.string().regex(/^0x[0-9a-fA-F]{64}$/).default('0x31491744e2dbf6df7fcf4ac0820d18a609b49076d45066d3568424e62f686cd1'),
   USDC_PRICE_FEED_ID: z.string().regex(/^0x[0-9a-fA-F]{64}$/).default('0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a'),
   MONAD_TRACKED_TOKENS: z.string().max(12_000).default(''),
@@ -38,6 +41,9 @@ export interface Config {
   indexerPollMs: number;
   indexerMaxLagBlocks: number;
   priceStaleMs: number;
+  monPriceStaleMs: number;
+  usdcPriceStaleMs: number;
+  minLiquidityUsd: number;
   monadPriceFeedId: `0x${string}`;
   usdcPriceFeedId: `0x${string}`;
   trackedTokens: {address:Address;decimals:number}[];
@@ -69,6 +75,7 @@ export function parseConfig(env: NodeJS.ProcessEnv | Record<string,string|undefi
     ...(v.API_URL ? {apiUrl:v.API_URL} : {}), port:v.PORT, host:v.HOST, logLevel:v.LOG_LEVEL,
     ...(v.SENTRY_DSN ? {sentryDsn:v.SENTRY_DSN} : {}), indexerPollMs:v.INDEXER_POLL_MS,
     indexerMaxLagBlocks:v.INDEXER_MAX_LAG_BLOCKS, priceStaleMs:v.PRICE_STALE_MS,
+    monPriceStaleMs:v.MONAD_PRICE_STALE_MS??v.PRICE_STALE_MS,usdcPriceStaleMs:v.USDC_PRICE_STALE_MS??v.PRICE_STALE_MS,minLiquidityUsd:v.MIN_LIQUIDITY_USD,
     monadPriceFeedId:v.MONAD_PRICE_FEED_ID as `0x${string}`, usdcPriceFeedId:v.USDC_PRICE_FEED_ID as `0x${string}`,
     trackedTokens,
   };

@@ -4,7 +4,7 @@ import { openDb } from '../src/pg.ts';
 
 it('applies migrations once, enables and forces RLS, and is idempotent',async()=>{
   const db=await openDb('memory:');
-  expect(await migrate(db)).toEqual(['0001_init.sql','0002_roles.sql']);expect(await migrate(db)).toEqual([]);
+  expect(await migrate(db)).toEqual(['0001_init.sql','0002_roles.sql','0003_integrity_nonces_ledger.sql']);expect(await migrate(db)).toEqual([]);
   const tables=await db.query<{tablename:string;rowsecurity:boolean;forcerowsecurity:boolean}>("select c.relname tablename,c.relrowsecurity rowsecurity,c.relforcerowsecurity forcerowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='monad' and c.relkind='r' and c.relname<>'schema_migrations'");
   expect(tables.length).toBeGreaterThanOrEqual(15);expect(tables.filter(t=>!t.rowsecurity||!t.forcerowsecurity)).toEqual([]);await db.close();
 });
