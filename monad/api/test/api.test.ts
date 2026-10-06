@@ -37,6 +37,16 @@ describe('API response contract and signed writes',()=>{
     const body=await meta.json() as {chainId:number;registry:string;priceSources:unknown[];indexerLag:unknown};
     expect(body.chainId).toBe(143);expect(body.registry).toBe(registry);expect(body.priceSources.length).toBeGreaterThan(0);expect(body.indexerLag).toBeTruthy();
   });
+  it('uses the selected testnet chain ID in the API EIP-712 signature domain',async()=>{
+    const testConfig=parseConfig({MONAD_NETWORK:'testnet',TESTNET_V2_ROUTER:'0x0000000000000000000000000000000000000011',TESTNET_V2_FACTORY:'0x0000000000000000000000000000000000000012',TESTNET_USDC:'0x0000000000000000000000000000000000000013',REGISTRY_ADDRESS:registry,DATABASE_URL:'memory:',DATABASE_URL_DIRECT:'memory:'});
+    const client={readContract:async({args}:{args:readonly unknown[]})=>validSignatures.has(String(args[1]) as Hex)?'0x1626ba7e':'0xffffffff'} as unknown as PublicClient;
+    app=createApp({db,config:testConfig,now:()=>clock,client,snapshot:opening});
+    const deadline=BigInt(Math.floor(clock/1000)+300),metadataHash=contentHash('testnet-agent-card');
+    const message={agentWallet:wallet,ownerWallet:wallet,metadataHash,nonce:0n,deadline};
+    const digest=hashTypedData({domain:eip712Domain(10143,registry),types:REGISTER_TYPES,primaryType:'Register',message} as never),signature=fixtureSignature(digest);validSignatures.add(signature);
+    const response=await app.request('/v1/agents/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentWallet:wallet,ownerWallet:wallet,metadataHash,nonce:'0',deadline:deadline.toString(),signature,slug:'testnet-agent',name:'Testnet',runtime:'custom',protocols:['uniswap']})});
+    expect(response.status).toBe(201);expect(testConfig.chainId).toBe(10143);
+  });
   it('keeps /v1 response shapes when registration is signed and stores its opening snapshot',async()=>{
     const res=await register();expect(res.status).toBe(201);
     const detail=await res.json() as Record<string,unknown>;

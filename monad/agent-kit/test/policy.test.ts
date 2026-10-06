@@ -18,6 +18,13 @@ it('pins the mainnet router and token set in a strict policy',()=>{
   expect(parsePolicy(DEFAULT_POLICY).maxPriceAgeSeconds).toEqual({WMON:3600,USDC:3600});
   expect(()=>parsePolicy({...DEFAULT_POLICY,maxSlippageBps:101})).toThrow();
 });
+it('selects a separate testnet signer profile and never accepts mainnet pins for it',()=>{
+  const env={MONAD_NETWORK:'testnet',TESTNET_V2_ROUTER:'0x0000000000000000000000000000000000000011',TESTNET_V2_FACTORY:'0x0000000000000000000000000000000000000012',TESTNET_USDC:'0x0000000000000000000000000000000000000013'};
+  const p=parsePolicy({...DEFAULT_POLICY,network:'testnet',chainId:10143,router:env.TESTNET_V2_ROUTER,factory:env.TESTNET_V2_FACTORY,tokens:[{symbol:'WMON',address:'0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541',decimals:18},{symbol:'USDC',address:env.TESTNET_USDC,decimals:6}]},env);
+  expect(p.network).toBe('testnet');expect(p.chainId).toBe(10143);expect(p.router).toBe(env.TESTNET_V2_ROUTER);
+  expect(()=>parsePolicy({...DEFAULT_POLICY,network:'testnet',chainId:143},env)).toThrow(/does not match.*10143/);
+  expect(()=>parsePolicy(DEFAULT_POLICY,env)).toThrow(/does not match MONAD_NETWORK/);
+});
 it('requires a regular root-owned, non-writable policy file',()=>{
   const dir=mkdtempSync(join(tmpdir(),'policy-test-')),path=join(dir,'policy.json');writeFileSync(path,JSON.stringify(DEFAULT_POLICY),{mode:0o600});
   const own=process.getuid?.()??-1;expect(()=>assertRootOwnedPolicyFile(path,own)).not.toThrow();expect(()=>assertRootOwnedPolicyFile(path,0)).toThrow(/owned by uid 0/);

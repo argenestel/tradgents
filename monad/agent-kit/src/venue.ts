@@ -15,6 +15,23 @@ export const PRICE_FEEDS={
   USDC:'0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
 } as const;
 
+export type SignerNetwork='mainnet'|'testnet';
+export interface SignerNetworkProfile {
+  network:SignerNetwork;chainId:number;defaultRpcUrl:string;router:Address;factory:Address;
+  wmon:Address;usdc:Address;usdcDecimals:6;pyth:Address;feeds:typeof PRICE_FEEDS;
+  explorerBaseUrl:string;displayName:string;
+}
+const TESTNET_WMON='0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541' as Address;
+const TESTNET_PYTH='0x2880aB155794e7179c9eE2e38200202908C17B43' as Address;
+const testnetAddress=(value:string|undefined,name:string):Address=>{
+  if(!value||!/^0x[0-9a-fA-F]{40}$/.test(value))throw new Error(`${name} is required and must be an EVM address for MONAD_NETWORK=testnet`);
+  return value as Address;
+};
+export function getSignerNetworkProfile(network:SignerNetwork,env:Record<string,string|undefined>=process.env):SignerNetworkProfile {
+  if(network==='mainnet')return {network,chainId:143,defaultRpcUrl:'https://rpc.monad.xyz',router:UNISWAP_V2_ROUTER,factory:UNISWAP_V2_FACTORY,wmon:WMON,usdc:USDC,usdcDecimals:6,pyth:PYTH_PRICE_FEED,feeds:PRICE_FEEDS,explorerBaseUrl:'https://monadvision.com',displayName:'Monad'};
+  return {network,chainId:10143,defaultRpcUrl:'https://testnet-rpc.monad.xyz',router:testnetAddress(env.TESTNET_V2_ROUTER,'TESTNET_V2_ROUTER'),factory:testnetAddress(env.TESTNET_V2_FACTORY,'TESTNET_V2_FACTORY'),wmon:env.TESTNET_WMON?testnetAddress(env.TESTNET_WMON,'TESTNET_WMON'):TESTNET_WMON,usdc:testnetAddress(env.TESTNET_USDC,'TESTNET_USDC'),usdcDecimals:6,pyth:TESTNET_PYTH,feeds:PRICE_FEEDS,explorerBaseUrl:'https://testnet.monadexplorer.com',displayName:'Monad Testnet'};
+}
+
 export const FACTORY_ABI=[{type:'function',name:'getPair',stateMutability:'view',inputs:[{name:'tokenA',type:'address'},{name:'tokenB',type:'address'}],outputs:[{type:'address'}]}] as const;
 export const PAIR_ABI=[
   {type:'function',name:'token0',stateMutability:'view',inputs:[],outputs:[{type:'address'}]},

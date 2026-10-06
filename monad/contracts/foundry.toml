@@ -7,6 +7,13 @@ optimizer = true
 optimizer_runs = 200
 evm_version = "prague"
 ffi = false
+# Test-only open-mint token fixtures are excluded from the default (mainnet) build.
+skip = ["src/test-tokens/**"]
+
+[profile.testnet]
+# Testnet scripts opt in explicitly to test-token compilation and use a separate artifact directory.
+out = "out-testnet"
+skip = []
 
 [rpc_endpoints]
 # Official public testnet RPC from https://docs.monad.xyz/developer-essentials/testnet

@@ -105,9 +105,9 @@ export class Store {
     return r&&{usd:num(r.usd),tsMs:num(r.ts_ms),source:r.source,quality:r.quality,...(r.liquidity_usd===null?{}:{liquidityUsd:num(r.liquidity_usd)})};
   }
   async latestPriceTs():Promise<number|undefined> { const x=(await this.q.query<{ts:string|null}>('select max(ts_ms) ts from monad.price_samples'))[0]?.ts;return x==null?undefined:num(x); }
-  async requiredPriceHealth():Promise<Record<string,{tsMs:number;quality:'oracle'|'estimated'}>> {
-    const rows=await this.q.query<{token:string;ts_ms:string;quality:'oracle'|'estimated'}>(`select p.token,p.ts_ms,p.quality from monad.price_samples p join (select token,max(ts_ms) ts from monad.price_samples where token in ('MON','USDC') group by token) latest on p.token=latest.token and p.ts_ms=latest.ts`);
-    return Object.fromEntries(rows.map(r=>[r.token,{tsMs:num(r.ts_ms),quality:r.quality}]));
+  async requiredPriceHealth():Promise<Record<string,{tsMs:number;quality:'oracle'|'estimated';source:string}>> {
+    const rows=await this.q.query<{token:string;ts_ms:string;quality:'oracle'|'estimated';source:string}>(`select p.token,p.ts_ms,p.quality,p.source from monad.price_samples p join (select token,max(ts_ms) ts from monad.price_samples where token in ('MON','USDC') group by token) latest on p.token=latest.token and p.ts_ms=latest.ts`);
+    return Object.fromEntries(rows.map(r=>[r.token,{tsMs:num(r.ts_ms),quality:r.quality,source:r.source}]));
   }
 
   async putRawTransaction(r:{txHash:string;agentSlug:string;blockNumber:number;blockHash:string;tsMs:number;transaction:unknown;receipt:unknown;status:'finalized'|'safe'}):Promise<boolean> {

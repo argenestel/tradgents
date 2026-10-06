@@ -10,15 +10,15 @@ import { assertPrivateDirectory,SpendLedger } from './spend-ledger.ts';
 import { assertRootOwnedPolicyFile,loadPolicy } from './policy.ts';
 import { signTradgentsMessage } from './signed-messages.ts';
 import { executeSwap } from './trade.ts';
-import { UNISWAP_V2_FACTORY,UNISWAP_V2_ROUTER } from './venue.ts';
+import { getSignerNetworkProfile,type SignerNetworkProfile } from './venue.ts';
 
-const envSchema=z.object({MONAD_RPC_URL:z.string().url(),MONAD_CHAIN_ID:z.coerce.number().int().default(143),REGISTRY_ADDRESS:z.string().refine(isAddress),SIGNER_DIR:z.string().min(1),SIGNER_POLICY_FILE:z.string().min(1),SIGNER_KEY_FILE:z.string().min(1),TRADGENTS_SIGNER_SOCKET:z.string().optional(),TRADGENTS_SIGNER_SOCKET_MODE:z.enum(['0600','0660']).default('0600'),TRADGENTS_SIGNER_SOCKET_GID:z.coerce.number().int().nonnegative().optional(),LOG_LEVEL:z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info')});
+const envSchema=z.object({MONAD_NETWORK:z.enum(['mainnet','testnet']).default('mainnet'),MONAD_RPC_URL:z.string().url().optional(),MONAD_CHAIN_ID:z.coerce.number().int().positive().optional(),TESTNET_V2_ROUTER:z.string().optional(),TESTNET_V2_FACTORY:z.string().optional(),TESTNET_USDC:z.string().optional(),TESTNET_WMON:z.string().optional(),TESTNET_FIXED_PRICES:z.enum(['true','false']).default('false'),TESTNET_MON_PRICE_USD:z.coerce.number().positive().finite().optional(),REGISTRY_ADDRESS:z.string().refine(isAddress),SIGNER_DIR:z.string().min(1),SIGNER_POLICY_FILE:z.string().min(1),SIGNER_KEY_FILE:z.string().min(1),TRADGENTS_SIGNER_SOCKET:z.string().optional(),TRADGENTS_SIGNER_SOCKET_MODE:z.enum(['0600','0660']).default('0600'),TRADGENTS_SIGNER_SOCKET_GID:z.coerce.number().int().nonnegative().optional(),LOG_LEVEL:z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info')});
 const reqSchema=z.discriminatedUnion('type',[
   z.object({type:z.literal('status')}).strict(),
   z.object({type:z.literal('swap'),intent:z.unknown()}).strict(),
   z.object({type:z.literal('sign'),message:z.unknown()}).strict(),
 ]);
-const rpcChain=defineChain({id:143,name:'Monad',nativeCurrency:{name:'Monad',symbol:'MON',decimals:18},rpcUrls:{default:{http:['https://rpc.monad.xyz']}}});
+function rpcChain(profile:SignerNetworkProfile){return defineChain({id:profile.chainId,name:profile.displayName,nativeCurrency:{name:'Monad',symbol:'MON',decimals:18},rpcUrls:{default:{http:[profile.defaultRpcUrl]}},blockExplorers:{default:{name:profile.displayName,url:profile.explorerBaseUrl}}});}
 function uid(){return typeof process.getuid==='function'?process.getuid():-1;}
 function assertSecretFile(path:string):void {
   const st=lstatSync(path);if(st.isSymbolicLink()||!st.isFile())throw new Error('signer key must be a regular file');
@@ -59,26 +59,35 @@ export async function assertSocketNotLive(path:string):Promise<void> {
 
 export async function startSigner(env:NodeJS.ProcessEnv=process.env):Promise<()=>Promise<void>> {
   const checked=envSchema.safeParse(env);if(!checked.success)throw new Error(`invalid signer environment: ${checked.error.issues.map(i=>i.message).join('; ')}`);
-  const e=checked.data;if(e.MONAD_CHAIN_ID!==143)throw new Error('signer is mainnet-only; MONAD_CHAIN_ID must be 143');
+  const e=checked.data;
+  const profile=getSignerNetworkProfile(e.MONAD_NETWORK,env);
+  if(e.MONAD_CHAIN_ID!==undefined&&e.MONAD_CHAIN_ID!==profile.chainId)throw new Error(`MONAD_CHAIN_ID ${e.MONAD_CHAIN_ID} does not match ${profile.network} profile chain ${profile.chainId}`);
+  if(e.TESTNET_FIXED_PRICES==='true'&&(profile.network!=='testnet'||e.TESTNET_MON_PRICE_USD===undefined))throw new Error('TESTNET_FIXED_PRICES is testnet-only and requires TESTNET_MON_PRICE_USD');
+  const rpcUrl=e.MONAD_RPC_URL??profile.defaultRpcUrl;
   const dir=resolve(e.SIGNER_DIR),policyPath=resolve(e.SIGNER_POLICY_FILE),keyPath=resolve(e.SIGNER_KEY_FILE),socketPath=resolve(e.TRADGENTS_SIGNER_SOCKET??join(dir,'signer.sock'));
   assertPrivateDirectory(dir,uid());assertRootOwnedPolicyFile(policyPath,0);assertSecretFile(keyPath);
   assertSocketMode(e.TRADGENTS_SIGNER_SOCKET_MODE,e.TRADGENTS_SIGNER_SOCKET_GID);
-  const policy=loadPolicy(policyPath);
-  if(policy.chainId!==143||policy.registryAddress.toLowerCase()!==e.REGISTRY_ADDRESS.toLowerCase())throw new Error('policy and signer registry/chain settings do not match');
+  const policy=loadPolicy(policyPath,env);
+  if(policy.network!==profile.network||policy.chainId!==profile.chainId||policy.registryAddress.toLowerCase()!==e.REGISTRY_ADDRESS.toLowerCase())throw new Error('policy and signer profile/registry settings do not match');
   const rawKey=readFileSync(keyPath,'utf8').trim();if(!/^0x[0-9a-fA-F]{64}$/.test(rawKey))throw new Error('signer key file must contain a 32-byte 0x-prefixed key');
   const account=privateKeyToAccount(rawKey as `0x${string}`);
   if(account.address.toLowerCase()!==policy.walletAddress.toLowerCase())throw new Error('signer key does not match policy wallet');
   const releaseLock=acquireSignerLock(dir);let cleanupServer:ReturnType<typeof createServer>|undefined;
   try {
-  const client=createPublicClient({chain:rpcChain,transport:http(e.MONAD_RPC_URL,{timeout:15_000,retryCount:2})});
-  const chainId=await client.getChainId();if(chainId!==143)throw new Error(`RPC chain ID ${chainId} is not mainnet 143`);
-  for(const [label,address] of [['registry',policy.registryAddress],['router',UNISWAP_V2_ROUTER],['factory',UNISWAP_V2_FACTORY],...policy.tokens.map(t=>[t.symbol,t.address] as const)] as Array<[string,Address]>) {
-    const code=await client.getCode({address});if(!code||code==='0x')throw new Error(`${label} has no bytecode at configured chain`);
+  const networkChain=rpcChain(profile);
+  const client=createPublicClient({chain:networkChain,transport:http(rpcUrl,{timeout:15_000,retryCount:2})});
+  const chainId=await client.getChainId();if(chainId!==profile.chainId)throw new Error(`RPC chain ID ${chainId} does not match ${profile.network} profile ${profile.chainId}`);
+  const pinned:Array<[string,Address]>=[['registry',policy.registryAddress],['router',profile.router],['factory',profile.factory],['WMON',profile.wmon],['USDC',profile.usdc],['Pyth',profile.pyth]];
+  for(const [label,address] of pinned) {
+    const code=await client.getCode({address});if(!code||code==='0x')throw new Error(`${label} has no bytecode at configured ${profile.network} chain`);
   }
   const usdc=policy.tokens.find(t=>t.symbol==='USDC')!;
-  const decimals=Number(await client.readContract({address:usdc.address,abi:[{type:'function',name:'decimals',stateMutability:'view',inputs:[],outputs:[{type:'uint8'}]}] as const,functionName:'decimals'}));
-  if(decimals!==6||decimals!==usdc.decimals)throw new Error(`on-chain USDC decimals ${decimals} do not match policy decimals ${usdc.decimals} (expected 6)`);
-  const walletClient=createWalletClient({account,chain:rpcChain,transport:http(e.MONAD_RPC_URL,{timeout:15_000,retryCount:2})});
+  const tokenAbi=[{type:'function',name:'decimals',stateMutability:'view',inputs:[],outputs:[{type:'uint8'}]},{type:'function',name:'symbol',stateMutability:'view',inputs:[],outputs:[{type:'string'}]}] as const;
+  const decimals=Number(await client.readContract({address:usdc.address,abi:tokenAbi,functionName:'decimals'}));
+  if(decimals!==profile.usdcDecimals||decimals!==usdc.decimals)throw new Error(`on-chain USDC decimals ${decimals} do not match profile/policy decimals ${usdc.decimals} (expected 6)`);
+  const wmonDecimals=Number(await client.readContract({address:profile.wmon,abi:tokenAbi,functionName:'decimals'})),wmonSymbol=await client.readContract({address:profile.wmon,abi:tokenAbi,functionName:'symbol'});
+  if(wmonDecimals!==18||wmonSymbol!=='WMON')throw new Error(`on-chain WMON metadata ${wmonSymbol}/${wmonDecimals} does not match profile WMON/18`);
+  const walletClient=createWalletClient({account,chain:networkChain,transport:http(rpcUrl,{timeout:15_000,retryCount:2})});
   const logger=pino({level:e.LOG_LEVEL,redact:{paths:['*.key','*.privateKey','*.authorization','*.signature'],censor:'[REDACTED]'}});
   const ledger=new SpendLedger(dir,policy,uid()),pausePath=join(dir,'PAUSE');
   await assertSocketNotLive(socketPath);
@@ -93,10 +102,10 @@ export async function startSigner(env:NodeJS.ProcessEnv=process.env):Promise<()=
         let reply:{ok:boolean;result?:unknown;error?:string};
         try{
           const parsed=reqSchema.safeParse(JSON.parse(line));if(!parsed.success)throw new Error('invalid signer request');
-          if(parsed.data.type==='status')reply={ok:true,result:{wallet:account.address,chainId:143,paused:existsSync(pausePath),spend:ledger.read()}};
+          if(parsed.data.type==='status')reply={ok:true,result:{wallet:account.address,network:profile.network,chainId:profile.chainId,paused:existsSync(pausePath),spend:ledger.read()}};
           else {
             if(existsSync(pausePath))throw new Error('signer is paused');
-            if(parsed.data.type==='swap')reply={ok:true,result:await executeSwap(parsed.data.intent,{client,walletClient,account,policy,ledger})};
+            if(parsed.data.type==='swap')reply={ok:true,result:await executeSwap(parsed.data.intent,{client,walletClient,account,policy,ledger,profile,testnetFixedPrices:e.TESTNET_FIXED_PRICES==='true',testnetMonPriceUsd:e.TESTNET_MON_PRICE_USD})};
             else reply={ok:true,result:{signature:await signTradgentsMessage(account,policy,parsed.data.message)}};
           }
         }catch(error){reply={ok:false,error:errorMessage(error)};logger.warn({type:'signer_request_rejected',error:error instanceof Error?error.name:'unknown'});}
@@ -111,7 +120,7 @@ export async function startSigner(env:NodeJS.ProcessEnv=process.env):Promise<()=
   finally{process.umask(oldUmask);}
   if(e.TRADGENTS_SIGNER_SOCKET_MODE==='0660')chownSync(socketPath,-1,e.TRADGENTS_SIGNER_SOCKET_GID!);
   chmodSync(socketPath,e.TRADGENTS_SIGNER_SOCKET_MODE==='0660'?0o660:0o600);
-  logger.info({wallet:account.address,chainId:143,socket:socketPath},'signer daemon ready');
+  logger.info({wallet:account.address,network:profile.network,chainId:profile.chainId,socket:socketPath},'signer daemon ready');
   return async()=>{try{await new Promise<void>(resolveClose=>server.close(()=>resolveClose()));}finally{try{unlinkSync(socketPath);}catch{}releaseLock();}logger.info('signer daemon stopped');};
   }catch(error){if(cleanupServer?.listening)await new Promise<void>(resolveClose=>cleanupServer!.close(()=>resolveClose()));try{unlinkSync(socketPath);}catch{}releaseLock();throw error;}
 }

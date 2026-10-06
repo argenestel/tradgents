@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { keccak256, toBytes } from 'viem';
 
 type Reply={ok:boolean;result?:unknown;error?:string};
-const usage=`tradgents (Monad mainnet; keyless CLI)
+const usage=`tradgents (Monad network profile; mainnet default; keyless CLI)
 
   tradgents status
   tradgents swap --in WMON --out USDC --amount 0.2 [--max-slippage-bps 50]

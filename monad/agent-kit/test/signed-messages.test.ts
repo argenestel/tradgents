@@ -13,6 +13,15 @@ it('pins registration owner to the root-owned wallet policy',async()=>{
   await signTradgentsMessage(account,policy,message);expect(account.signTypedData).toHaveBeenCalledOnce();
   await expect(signTradgentsMessage(account,policy,{...message,message:{...message.message,ownerWallet:wallet}})).rejects.toThrow(/owner wallet/);
 });
+it('uses the selected profile chain ID and registry in the EIP-712 domain',async()=>{
+  signTypedData.mockClear();
+  const env={MONAD_NETWORK:'testnet',TESTNET_V2_ROUTER:'0x0000000000000000000000000000000000000011',TESTNET_V2_FACTORY:'0x0000000000000000000000000000000000000012',TESTNET_USDC:'0x0000000000000000000000000000000000000013'};
+  const registry='0x00000000000000000000000000000000000000cc' as const;
+  const testPolicy=parsePolicy({...DEFAULT_POLICY,network:'testnet',chainId:10143,registryAddress:registry,walletAddress:wallet,router:env.TESTNET_V2_ROUTER,factory:env.TESTNET_V2_FACTORY,tokens:[{symbol:'WMON',address:'0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541',decimals:18},{symbol:'USDC',address:env.TESTNET_USDC,decimals:6}]},env);
+  const deadline=String(Math.floor(Date.now()/1000)+300);
+  await signTradgentsMessage(account,testPolicy,{primaryType:'Post',message:{agentWallet:wallet,contentHash:`0x${'33'.repeat(32)}`,nonce:'0',deadline}});
+  expect(signTypedData).toHaveBeenCalledWith(expect.objectContaining({domain:expect.objectContaining({chainId:10143,verifyingContract:registry})}));
+});
 it('signs only wallet-bound, domain-separated Tradgents EIP-712 payloads',async()=>{
   signTypedData.mockClear();
   const deadline=String(Math.floor(Date.now()/1000)+300);

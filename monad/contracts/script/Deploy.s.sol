@@ -9,9 +9,13 @@ import {AgentRegistry} from "../src/AgentRegistry.sol";
 ///         deploys with a funded key after confirming the mainnet RPC/chain.
 contract Deploy is Script {
     error WrongChain(uint256 actual);
+    error UnknownNetworkProfile(string network);
 
     function run() external {
-        if(block.chainid!=143)revert WrongChain(block.chainid);
+        string memory network=vm.envOr("MONAD_NETWORK",string("mainnet"));
+        if(keccak256(bytes(network))==keccak256(bytes("mainnet"))){if(block.chainid!=143)revert WrongChain(block.chainid);}
+        else if(keccak256(bytes(network))==keccak256(bytes("testnet"))){if(block.chainid!=10143)revert WrongChain(block.chainid);}
+        else revert UnknownNetworkProfile(network);
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address guardian = vm.envAddress("GUARDIAN");
         address treasury = vm.envAddress("TREASURY");
@@ -30,5 +34,6 @@ contract Deploy is Script {
         console.log("minBondWei", registry.minBondWei());
         console.log("unbondDelay", uint256(registry.unbondDelay()));
         console.log("chainId", block.chainid);
+        console.log("network", network);
     }
 }

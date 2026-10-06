@@ -1,9 +1,9 @@
 import { decodeEventLog, getAddress, numberToHex, pad, parseAbi, parseAbiItem, toEventSelector, type Address, type Hex, type PublicClient } from 'viem';
 import type { Config } from './config.ts';
-import { finalizedBlockNumber, readPythPrice } from './chain.ts';
+import { finalizedBlockNumber, readConfiguredPrice } from './chain.ts';
 import { readWalletBalances, snapshotEquity } from './snapshot.ts';
 import { replayLedger, type PriceSample, type TxObservation, type TransferDelta } from './ledger.ts';
-import { SUPPORTED_SWAP_TARGETS, TOKEN_CATALOG, USDC, WMON } from './protocols.ts';
+import { TOKEN_CATALOG, swapTargetsForProfile } from './protocols.ts';
 import { Store } from './store.ts';
 import type { Db } from './pg.ts';
 import type { Agent } from './types.ts';
@@ -86,7 +86,7 @@ export class Indexer {
     if(success&&to===wallet&&BigInt(String(tx.value??0))>0n)deltas.push({token:'MON',raw:BigInt(String(tx.value)),decimals:18,symbol:'MON'});
     let wrap:TxObservation['wrap'];
     for(const log of receiptLogs){
-      if(lower(String(log.address))===lower(WMON)){
+      if(lower(String(log.address))===lower(this.config.profile.wmon)){
         try {
           const event=decodeEventLog({abi:WMON_ABI,data:String(log.data) as Hex,topics:log.topics as never});
           if(event.eventName==='Deposit'&&lower(String(event.args.dst))===wallet)wrap={kind:'deposit',amount:event.args.wad};
@@ -112,7 +112,7 @@ export class Indexer {
       children=trace.calls??[];
       this.collectInternalValue(children,wallet,deltas);
     }catch {
-      const knownToken=to===lower(WMON)||to===lower(USDC),needsTrace=Boolean(to&&SUPPORTED_SWAP_TARGETS.has(to))||Boolean(to===lower(WMON)&&wrap?.kind==='withdrawal');
+      const knownToken=to===lower(this.config.profile.wmon)||to===lower(this.config.profile.usdc.address),needsTrace=Boolean(to&&swapTargetsForProfile(this.config.profile).has(to))||Boolean(to===lower(this.config.profile.wmon)&&wrap?.kind==='withdrawal');
       let contractTarget=false;
       if(to){try{const code=await this.wait(this.client.getCode({address:getAddress(to),blockNumber}),signal);contractTarget=Boolean(code&&code!=='0x');}catch{if(signal?.aborted)throw signal.reason;contractTarget=true;}}
       if(success&&(needsTrace||contractTarget&&!knownToken||BigInt(String(tx.value??0))>0n&&contractTarget))internalValueUnknown=true;
@@ -141,8 +141,8 @@ export class Indexer {
   }
   private async tokenMeta(address:Address,blockNumber:bigint,signal?:AbortSignal):Promise<TokenMeta> {
     const a=lower(address),cached=this.tokenCache.get(a);if(cached)return cached;
-    if(a===lower(WMON)){const m={token:'WMON',decimals:18,symbol:'WMON',verified:true};this.tokenCache.set(a,m);return m;}
-    if(a===lower(USDC)){const m={token:'USDC',decimals:6,symbol:'USDC',verified:true};this.tokenCache.set(a,m);return m;}
+    if(a===lower(this.config.profile.wmon)){const m={token:'WMON',decimals:18,symbol:'WMON',verified:true};this.tokenCache.set(a,m);return m;}
+    if(a===lower(this.config.profile.usdc.address)){const m={token:'USDC',decimals:this.config.profile.usdc.decimals,symbol:'USDC',verified:true};this.tokenCache.set(a,m);return m;}
     let decimals=18,symbol=`TOKEN-${a.slice(2,8)}`,verified=false;
     try{decimals=Number(await this.wait(this.client.readContract({address,abi:TOKEN_ABI,functionName:'decimals',blockNumber}),signal));verified=Number.isInteger(decimals)&&decimals>=0&&decimals<=36;}catch{if(signal?.aborted)throw signal.reason;}
     try{symbol=String(await this.wait(this.client.readContract({address,abi:TOKEN_ABI,functionName:'symbol',blockNumber}),signal));}catch{if(signal?.aborted)throw signal.reason;}
@@ -151,10 +151,10 @@ export class Indexer {
   private async registrationFor(decoded:{args:Record<string,unknown>},blockNumber:bigint,signal?:AbortSignal):Promise<{agent:Agent;opening:import('./store.ts').Opening}> {
     const wallet=getAddress(String(decoded.args.agentWallet));
     const block=await this.wait(this.client.getBlock({blockNumber}),signal);
-    const balances=await this.wait(readWalletBalances(this.client,wallet,blockNumber,this.config.trackedTokens),signal);
+    const balances=await this.wait(readWalletBalances(this.client,wallet,blockNumber,this.config.trackedTokens,this.config.profile),signal);
     const [mon,usdc]=await Promise.all([
-      this.wait(readPythPrice(this.client,this.config.monadPriceFeedId,Number(block.timestamp)*1000,this.config.monPriceStaleMs,blockNumber),signal),
-      this.wait(readPythPrice(this.client,this.config.usdcPriceFeedId,Number(block.timestamp)*1000,this.config.usdcPriceStaleMs,blockNumber),signal),
+      this.wait(readConfiguredPrice(this.client,this.config,'MON',Number(block.timestamp)*1000,blockNumber),signal),
+      this.wait(readConfiguredPrice(this.client,this.config,'USDC',Number(block.timestamp)*1000,blockNumber),signal),
     ]);
     const tokenDecimals=Object.fromEntries(this.config.trackedTokens.map(t=>[t.address.toLowerCase(),t.decimals]));
     const prices:Record<string,number>={MON:mon.usd,WMON:mon.usd,USDC:usdc.usd};
@@ -198,7 +198,7 @@ export class Indexer {
 
   private async compareBalances(agent:Agent,replayed:Map<string,bigint>,blockNumber:bigint,signal?:AbortSignal):Promise<{ok:boolean;differences:Record<string,{replayed:string;chain:string}>}> {
     try{
-      const actual=await this.wait(readWalletBalances(this.client,getAddress(agent.wallet),blockNumber,this.config.trackedTokens),signal);
+      const actual=await this.wait(readWalletBalances(this.client,getAddress(agent.wallet),blockNumber,this.config.trackedTokens,this.config.profile),signal);
       const chain=new Map<string,bigint>(Object.entries(actual).map(([token,raw])=>[token,BigInt(raw)]));
       for(const token of replayed.keys()){
         if(!/^0x[0-9a-f]{40}$/i.test(token)||chain.has(token))continue;
@@ -257,7 +257,7 @@ export class Indexer {
         await s.putRawTransaction({txHash:item.observation.hash,agentSlug:item.agent.slug,blockNumber:Number(blockNumber),blockHash:String(block.hash),tsMs:item.observation.tsMs,transaction:{observation:JSON.parse(JSON.stringify(item.observation,SERIALIZE)),transaction:JSON.parse(JSON.stringify(item.tx,SERIALIZE))},receipt:JSON.parse(JSON.stringify(item.receipt,SERIALIZE)),status:'finalized'});
         const rawLogs=new Map<number,Record<string,unknown>>();
         for(const log of item.logs)rawLogs.set(Number(log.logIndex),log);
-        for(const log of item.receiptLogs)if(lower(String(log.address))===lower(WMON))rawLogs.set(Number(log.logIndex),log);
+        for(const log of item.receiptLogs)if(lower(String(log.address))===lower(this.config.profile.wmon))rawLogs.set(Number(log.logIndex),log);
         for(const log of rawLogs.values()){
           this.check(signal);
           await s.putRawLog({chainId:this.config.chainId,txHash:String(log.transactionHash),logIndex:Number(log.logIndex),blockNumber:Number(blockNumber),blockHash:String(block.hash),address:String(log.address),topic0:String((log.topics as string[])[0]),topics:(log.topics as string[]),data:String(log.data) as Hex,status:'finalized'});
@@ -274,7 +274,7 @@ export class Indexer {
         for(const o of txs)for(const d of o.deltas)tokenDecimals.set(d.token,d.decimals);
         for(const token of Object.keys(openingBalances))if(/^0x[0-9a-f]{40}$/i.test(token)&&!tokenDecimals.has(token))tokenDecimals.set(token,(await this.tokenMeta(getAddress(token),blockNumber,signal)).decimals);
         const maxPriceAgeMs={MON:this.config.monPriceStaleMs,WMON:this.config.monPriceStaleMs,USDC:this.config.usdcPriceStaleMs};
-        let result=replayLedger({agentSlug:slug,wallet:getAddress(agent.wallet),opening:openingBalances,openingTsMs:opening.tsMs,openingLots:lots,tokenDecimals:Object.fromEntries(tokenDecimals),transactions:txs,samples,maxPriceAgeMs});
+        let result=replayLedger({agentSlug:slug,wallet:getAddress(agent.wallet),opening:openingBalances,openingTsMs:opening.tsMs,openingLots:lots,tokenDecimals:Object.fromEntries(tokenDecimals),transactions:txs,samples,maxPriceAgeMs,profile:this.config.profile});
         const at=Number(block.timestamp)*1000,monPrice=(await s.nearestPrice('MON',at))?.usd??opening.prices.MON??0;
         let comparison=await this.compareBalances(agent,result.balances,blockNumber,signal);
         const rebuild=!comparison.ok||await s.integrityDrifted(slug);
@@ -283,7 +283,7 @@ export class Indexer {
           if(!comparison.ok)this.logger?.warn({agentSlug:slug,differences:comparison.differences},'ledger balance drift detected; rebuilding from raw transactions');
           allTransactions=(await s.rawObservations(slug)).filter(o=>o.blockNumber>opening.blockNumber);
           const openingBalances=Object.fromEntries(Object.entries(opening.balances).map(([k,v])=>[k,BigInt(v)]));
-          result=replayLedger({agentSlug:slug,wallet:getAddress(agent.wallet),opening:openingBalances,openingTsMs:opening.tsMs,tokenDecimals:Object.fromEntries(tokenDecimals),transactions:allTransactions,samples,maxPriceAgeMs});
+          result=replayLedger({agentSlug:slug,wallet:getAddress(agent.wallet),opening:openingBalances,openingTsMs:opening.tsMs,tokenDecimals:Object.fromEntries(tokenDecimals),transactions:allTransactions,samples,maxPriceAgeMs,profile:this.config.profile});
           comparison=await this.compareBalances(agent,result.balances,blockNumber,signal);
           if(!comparison.ok)this.logger?.error({agentSlug:slug,differences:comparison.differences},'rebuilt ledger still differs from chain');
         }
@@ -306,7 +306,7 @@ export class Indexer {
     for(const agent of agents){
       this.check(signal);const opening=await s.opening(agent.slug);if(!opening)continue;
       const observations=await s.rawObservations(agent.slug);
-      const result=replayLedger({agentSlug:agent.slug,wallet:getAddress(agent.wallet),opening:Object.fromEntries(Object.entries(opening.balances).map(([k,v])=>[k,BigInt(v)])),openingTsMs:opening.tsMs,tokenDecimals:opening.tokenDecimals,transactions:observations.filter(o=>o.blockNumber>opening.blockNumber),samples,maxPriceAgeMs});
+      const result=replayLedger({agentSlug:agent.slug,wallet:getAddress(agent.wallet),opening:Object.fromEntries(Object.entries(opening.balances).map(([k,v])=>[k,BigInt(v)])),openingTsMs:opening.tsMs,tokenDecimals:opening.tokenDecimals,transactions:observations.filter(o=>o.blockNumber>opening.blockNumber),samples,maxPriceAgeMs,profile:this.config.profile});
       const decimals=new Map<string,number>(Object.entries(opening.tokenDecimals??{}));
       for(const o of observations)for(const d of o.deltas)decimals.set(d.token,d.decimals);
       const comparison=await this.compareBalances(agent,result.balances,block.number,signal),integrityOk=comparison.ok;
@@ -328,8 +328,8 @@ export class Indexer {
   }
   async samplePrices(now=Date.now(),signal?:AbortSignal):Promise<void> {
     this.check(signal);const samples:PriceSample[]=[],finalized=await this.wait(finalizedBlockNumber(this.client),signal);
-    for(const [token,feed,staleMs] of [['MON',this.config.monadPriceFeedId,this.config.monPriceStaleMs],['USDC',this.config.usdcPriceFeedId,this.config.usdcPriceStaleMs]] as const){
-      const sample=await this.wait(readPythPrice(this.client,feed,now,staleMs,finalized),signal);
+    for(const token of ['MON','USDC'] as const){
+      const sample=await this.wait(readConfiguredPrice(this.client,this.config,token,now,finalized),signal);
       samples.push(priceWithLiquidityFloor({...sample,token},this.config.minLiquidityUsd));
     }
     samples.push({...samples[0],token:'WMON'});
@@ -361,7 +361,7 @@ export async function runIndexer(db:Db,client:PublicClient,config:Config,logger?
   if(signal?.aborted)controller.abort(signal.reason);else signal?.addEventListener('abort',()=>controller.abort(signal.reason),{once:true});
   const indexer=new Indexer(db,client,config,logger);
   try{
-    const locked=await db.withAdvisoryLock(143,()=>indexer.run(controller.signal),{wait:false,onLost:err=>{lockLost=true;controller.abort(err);}});
+    const locked=await db.withAdvisoryLock(config.chainId,()=>indexer.run(controller.signal),{wait:false,onLost:err=>{lockLost=true;controller.abort(err);}});
     if(locked===undefined)throw new Error('another Monad indexer holds the advisory lock');
   }catch(error){if(signal?.aborted&&!lockLost)return;throw error;}
 }

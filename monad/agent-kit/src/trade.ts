@@ -4,26 +4,35 @@ import type { PrivateKeyAccount } from 'viem/accounts';
 import type { SignerPolicy } from './policy.ts';
 import { SpendLedger } from './spend-ledger.ts';
 import { validateApprovalShape, validateIntent, validateSwapShape, type SwapIntent } from './validation.ts';
-import { ERC20_ABI, FACTORY_ABI, PAIR_ABI, PRICE_FEEDS, PYTH_ABI, PYTH_PRICE_FEED, ROUTER_ABI } from './venue.ts';
+import { ERC20_ABI, FACTORY_ABI, PAIR_ABI, PYTH_ABI, ROUTER_ABI, getSignerNetworkProfile, type SignerNetworkProfile } from './venue.ts';
 
 const MAX_UINT=(1n<<256n)-1n;
 const NOW=()=>Date.now();
 const BALANCE_ABI=[{type:'function',name:'balanceOf',stateMutability:'view',inputs:[{name:'account',type:'address'}],outputs:[{type:'uint256'}]}] as const;
 const same=(a:string,b:string)=>a.toLowerCase()===b.toLowerCase();
-export interface TradeResult {approvalHash?:Hex;swapHash:Hex;amountInRaw:string;quotedOutRaw:string;minOutRaw:string;notionalUsd:number;intentId:string;poolLiquidityUsd:number;gasReserveUsd:number}
-export interface TradeDeps {client:PublicClient;walletClient:WalletClient;account:PrivateKeyAccount;policy:SignerPolicy;ledger:SpendLedger;now?:()=>number}
-interface Price {usd:number;publishTime:number;quality:'oracle'|'estimated'}
-async function tokenPrice(client:PublicClient,symbol:'WMON'|'USDC',now:number,policy:SignerPolicy):Promise<Price> {
-  const feed=PRICE_FEEDS[symbol];
-  const p=await client.readContract({address:PYTH_PRICE_FEED,abi:PYTH_ABI,functionName:'getPriceUnsafe',args:[feed]});
-  let usd=Number(p.price)*10**p.expo;const publishTime=Number(p.publishTime);
-  const ageMs=now-publishTime*1000;let quality:Price['quality']=ageMs>=-60_000&&ageMs<=policy.maxPriceAgeSeconds[symbol]*1000&&Number(p.conf)/Math.max(1,Number(p.price))<=0.01?'oracle':'estimated';
-  if(symbol==='USDC'){
-    if(usd>=0.97&&usd<=1.03)usd=1;
-    else quality='estimated';
+export interface TradeResult {approvalHash?:Hex;swapHash:Hex;amountInRaw:string;quotedOutRaw:string;minOutRaw:string;notionalUsd:number;intentId:string;poolLiquidityUsd:number;gasReserveUsd:number;priceQuality:'oracle'|'estimated';priceSource:string}
+export interface TradeDeps {client:PublicClient;walletClient:WalletClient;account:PrivateKeyAccount;policy:SignerPolicy;ledger:SpendLedger;now?:()=>number;profile?:SignerNetworkProfile;testnetFixedPrices?:boolean;testnetMonPriceUsd?:number}
+interface Price {usd:number;publishTime:number;quality:'oracle'|'estimated';source:string}
+async function tokenPrice(client:PublicClient,symbol:'WMON'|'USDC',now:number,policy:SignerPolicy,profile:SignerNetworkProfile,fixed:{enabled:boolean;monUsd?:number}):Promise<Price> {
+  let result:Price|undefined;
+  try {
+    const feed=profile.feeds[symbol];
+    const p=await client.readContract({address:profile.pyth,abi:PYTH_ABI,functionName:'getPriceUnsafe',args:[feed]});
+    let usd=Number(p.price)*10**p.expo;const publishTime=Number(p.publishTime);
+    const ageMs=now-publishTime*1000;let quality:Price['quality']=ageMs>=-60_000&&ageMs<=policy.maxPriceAgeSeconds[symbol]*1000&&Number(p.conf)/Math.max(1,Number(p.price))<=0.01?'oracle':'estimated';
+    if(symbol==='USDC'){
+      if(usd>=0.97&&usd<=1.03)usd=1;
+      else quality='estimated';
+    }
+    if(Number.isFinite(usd)&&usd>0)result={usd,publishTime,quality,source:'pyth-monad-onchain'};
+  }catch(error){if(!fixed.enabled)throw error;}
+  if(result?.quality==='oracle')return result;
+  if(fixed.enabled&&policy.network==='testnet'){
+    const usd=symbol==='USDC'?1:fixed.monUsd;
+    if(usd===undefined||!Number.isFinite(usd)||usd<=0)throw new Error('TESTNET_FIXED_PRICES requires a positive TESTNET_MON_PRICE_USD');
+    return {usd,publishTime:Math.floor(now/1000),quality:'estimated',source:'testnet-fixed-prices'};
   }
-  if(quality!=='oracle'||!Number.isFinite(usd)||usd<=0)throw new Error(`${symbol} price is stale or outside its trusted band`);
-  return {usd,publishTime,quality};
+  throw new Error(`${symbol} price is stale or outside its trusted band`);
 }
 const ceilDiv=(n:bigint,d:bigint)=>n===0n?0n:(n+d-1n)/d;
 export function oracleMinimumOutput(amountIn:bigint,inputDecimals:number,outputDecimals:number,inputUsd:number,outputUsd:number,toleranceBps:number):bigint {
@@ -65,6 +74,12 @@ async function tracedStateOverride(client:PublicClient,tx:{from:Address;to:Addre
     if(state.nonce)item.nonce=state.nonce as Hex;
     if(state.code)item.code=state.code as Hex;
     if(state.storage&&Object.keys(state.storage).length)item.stateDiff=Object.fromEntries(Object.entries(state.storage).map(([k,v])=>[k,v as Hex]));
+    // Some clients omit a deleted (zeroed) slot from the diff-mode post map. The pre map contains changed slots too; explicitly override omitted post values with zero rather than letting eth_call observe the old allowance.
+    const before=trace.pre?.[address]?.storage;
+    if(before){
+      item.stateDiff??={};
+      for(const slot of Object.keys(before))if(state.storage?.[slot]===undefined)item.stateDiff[slot]=`0x${'00'.repeat(32)}`;
+    }
     override[address]=item;
   }
   return override;
@@ -102,7 +117,8 @@ async function simulateSwap(client:PublicClient,policy:SignerPolicy,input:Signer
   const inIndex=policy.tokens.findIndex(t=>same(t.address,input.address)),outIndex=policy.tokens.findIndex(t=>same(t.address,output.address));
   if(inIndex<0||outIndex<0||before[inIndex]-after[inIndex]!==amountIn||after[outIndex]-before[outIndex]<minOut)throw new Error('swap simulation balances do not match the checked input and minimum output');
   if(after.some((balance,i)=>i!==inIndex&&i!==outIndex&&balance!==before[i]))throw new Error('swap simulation moved an unexpected wallet token balance');
-  if(await readSimulatedAllowance(client,input.address,policy.walletAddress,policy.router,override)!==0n)throw new Error('swap simulation left an unexpected router allowance');
+  const simulatedAllowance=await readSimulatedAllowance(client,input.address,policy.walletAddress,policy.router,override);
+  if(simulatedAllowance!==0n)throw new Error(`swap simulation left an unexpected router allowance (${simulatedAllowance})`);
 }
 function gasUsd(gasLimit:bigint,gasPrice:bigint,monUsd:number):number {
   const wei=gasLimit*gasPrice;
@@ -110,11 +126,12 @@ function gasUsd(gasLimit:bigint,gasPrice:bigint,monUsd:number):number {
 }
 export async function executeSwap(input:unknown,deps:TradeDeps):Promise<TradeResult> {
   const intent=validateIntent(input,deps.policy),now=(deps.now??NOW)(),nowSec=Math.floor(now/1000);
+  const profile=deps.profile??getSignerNetworkProfile(deps.policy.network),fixed={enabled:deps.testnetFixedPrices===true,monUsd:deps.testnetMonPriceUsd};
   const inputToken=deps.policy.tokens.find(t=>t.symbol===intent.tokenIn)!,outputToken=deps.policy.tokens.find(t=>t.symbol===intent.tokenOut)!;
   if(deps.account.address.toLowerCase()!==deps.policy.walletAddress.toLowerCase())throw new Error('signer key does not match policy wallet');
   const amountIn=parseUnits(intent.amount,inputToken.decimals);
   if(amountIn<=0n||amountIn>=MAX_UINT)throw new Error('amount is outside safe integer bounds');
-  const [inputPrice,outputPrice]=await Promise.all([tokenPrice(deps.client,intent.tokenIn,now,deps.policy),tokenPrice(deps.client,intent.tokenOut,now,deps.policy)]);
+  const [inputPrice,outputPrice]=await Promise.all([tokenPrice(deps.client,intent.tokenIn,now,deps.policy,profile,fixed),tokenPrice(deps.client,intent.tokenOut,now,deps.policy,profile,fixed)]);
   const rawNotional=human(amountIn,inputToken.decimals)*inputPrice.usd;
   if(!Number.isFinite(rawNotional)||rawNotional<=0)throw new Error('trade notional is outside safe USD bounds');
   const notionalUsd=Math.ceil(rawNotional*1_000_000)/1_000_000;
@@ -169,5 +186,5 @@ export async function executeSwap(input:unknown,deps:TradeDeps):Promise<TradeRes
   const swapHash=await deps.walletClient.sendTransaction({account:deps.account,chain:deps.walletClient.chain??null,to:deps.policy.router,data:swapData,value:0n,gas:swapGas,gasPrice});
   const receipt=await deps.client.waitForTransactionReceipt({hash:swapHash});
   if(receipt.status!=='success')throw new Error('swap transaction failed; the spend budget remains reserved');
-  return { ...(approvalHash?{approvalHash}:{}),swapHash,amountInRaw:amountIn.toString(),quotedOutRaw:quotedOut.toString(),minOutRaw:minOut.toString(),notionalUsd,intentId,poolLiquidityUsd:liquidity.usd,gasReserveUsd};
+  return { ...(approvalHash?{approvalHash}:{}),swapHash,amountInRaw:amountIn.toString(),quotedOutRaw:quotedOut.toString(),minOutRaw:minOut.toString(),notionalUsd,intentId,poolLiquidityUsd:liquidity.usd,gasReserveUsd,priceQuality:inputPrice.quality==='oracle'&&outputPrice.quality==='oracle'?'oracle':'estimated',priceSource:inputPrice.source===outputPrice.source?inputPrice.source:`${inputPrice.source}+${outputPrice.source}`};
 }

@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
 import type { Interaction, InteractionKind, PnlComponent, ProtocolId } from './types.ts';
+import type { NetworkProfile } from './profiles.ts';
 
 // Mainnet entries were checked in monad-crypto/protocols mainnet JSONC:
 // https://github.com/monad-crypto/protocols/blob/main/mainnet/uniswap.jsonc
@@ -24,6 +25,12 @@ export const SUPPORTED_SWAP_TARGETS: ReadonlyMap<string, ProtocolId> = new Map([
   [KURU_FLOW_ROUTER.toLowerCase(), 'kuru'],
   [UNISWAP_V2_ROUTER.toLowerCase(), 'uniswap'],
 ]);
+export function swapTargetsForProfile(profile: NetworkProfile): ReadonlyMap<string, ProtocolId> {
+  return new Map([
+    ...(profile.network === 'mainnet' ? [[KURU_FLOW_ROUTER.toLowerCase(), 'kuru'] as const] : []),
+    [profile.router.toLowerCase(), 'uniswap'],
+  ]);
+}
 export const SUPPORTED_PROGRAMS = new Set([...SUPPORTED_SWAP_TARGETS.keys(), WMON.toLowerCase()]);
 
 export const PROTOCOL_IDS = ['kuru','uniswap','morpho','curvance','magma','upshift','perpl','nadfun'] as const satisfies readonly ProtocolId[];

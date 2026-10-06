@@ -1,5 +1,6 @@
 import type { Address } from 'viem';
-import { SUPPORTED_SWAP_TARGETS, TOKEN_CATALOG, WMON } from './protocols.ts';
+import { TOKEN_CATALOG, swapTargetsForProfile } from './protocols.ts';
+import { MAINNET_PROFILE, type NetworkProfile } from './profiles.ts';
 import type { Interaction, ProtocolId } from './types.ts';
 
 export type TokenId='MON'|'WMON'|'USDC'|string;
@@ -43,17 +44,17 @@ const tokenMeta=(token:TokenId,decimals?:number)=>{
 };
 const priceAt=(samples:PriceSample[],token:TokenId,ts:number,maxAgeMs?:number)=>{const sample=nearestPrice(samples,token,ts);return sample&&(maxAgeMs===undefined||Math.abs(sample.tsMs-ts)<=maxAgeMs)?sample.usd:undefined;};
 const oraclePriceAt=(samples:PriceSample[],token:TokenId,ts:number,maxAgeMs?:number)=>{const sample=nearestPrice(samples,token,ts);return sample?.quality==='oracle'&&(maxAgeMs===undefined||Math.abs(sample.tsMs-ts)<=maxAgeMs)?sample.usd:undefined;};
-function isKnownTokenAddress(address:string):boolean {
-  return address.toLowerCase()===WMON.toLowerCase()||address.toLowerCase()===TOKEN_CATALOG.USDC.address.toLowerCase();
+function isKnownTokenAddress(address:string,profile:NetworkProfile):boolean {
+  return address.toLowerCase()===profile.wmon.toLowerCase()||address.toLowerCase()===profile.usdc.address.toLowerCase();
 }
 
 export type ActivityKind='wrap'|'swap'|'flow'|'neutral'|'unsupported';
-export function classifyActivity(tx:TxObservation):{kind:ActivityKind;protocol?:ProtocolId;reason?:string} {
+export function classifyActivity(tx:TxObservation,profile:NetworkProfile=MAINNET_PROFILE):{kind:ActivityKind;protocol?:ProtocolId;reason?:string} {
   if(tx.internalValueUnknown)return {kind:'unsupported',reason:'internal value transfer cannot be attributed without traces'};
   const to=tx.to?.toLowerCase();
   const core=tx.deltas.filter(d=>d.raw!==0n);
-  const targetProtocol=to?SUPPORTED_SWAP_TARGETS.get(to):undefined;
-  const isWrapTarget=to===WMON.toLowerCase()||tx.wrap!==undefined;
+  const targetProtocol=to?swapTargetsForProfile(profile).get(to):undefined;
+  const isWrapTarget=to===profile.wmon.toLowerCase()||tx.wrap!==undefined;
   const onlyNativeWrapTokens=core.every(d=>d.token==='WMON'||d.token==='MON')&&core.length<=2;
   const hasOppositeWrapDeltas=core.some(d=>d.token==='MON'&&d.raw<0n)&&core.some(d=>d.token==='WMON'&&d.raw>0n)||core.some(d=>d.token==='WMON'&&d.raw<0n)&&core.some(d=>d.token==='MON'&&d.raw>0n);
   if(isWrapTarget&&onlyNativeWrapTokens&&(tx.wrap!==undefined||core.length===0||hasOppositeWrapDeltas)) return {kind:'wrap'};
@@ -64,10 +65,10 @@ export function classifyActivity(tx:TxObservation):{kind:ActivityKind;protocol?:
     if(core.length===1||core.every(d=>d.raw>0n)||core.every(d=>d.raw<0n))return {kind:'flow',protocol:targetProtocol};
   }
   if(core.length===0) {
-    if(tx.to&&isKnownTokenAddress(tx.to)&&tx.dataSelector==='0x095ea7b3')return {kind:'neutral'};
-    if(tx.to&&to===WMON.toLowerCase())return {kind:'wrap'};
+    if(tx.to&&isKnownTokenAddress(tx.to,profile)&&tx.dataSelector==='0x095ea7b3')return {kind:'neutral'};
+    if(tx.to&&to===profile.wmon.toLowerCase())return {kind:'wrap'};
     if(!tx.success&&targetProtocol)return {kind:'neutral',protocol:targetProtocol};
-    if(tx.dataSelector&&tx.dataSelector!=='0x'&&!(tx.to&&isKnownTokenAddress(tx.to)))return {kind:'unsupported',reason:'unrecognized contract call with no attributable balance changes'};
+    if(tx.dataSelector&&tx.dataSelector!=='0x'&&!(tx.to&&isKnownTokenAddress(tx.to,profile)))return {kind:'unsupported',reason:'unrecognized contract call with no attributable balance changes'};
     return {kind:'neutral'};
   }
   if(core.length>0) {
@@ -84,7 +85,7 @@ function consumeFifo(lots:WorkingLot[],token:TokenId,qty:bigint):{cost:number;co
 }
 
 /** Deterministic fixture/replay reducer. Raw quantities remain bigint; USD conversion occurs only at the mark edge. */
-export function replayLedger(args:{agentSlug:string;wallet:Address;opening:Record<TokenId,bigint>;openingTsMs?:number;openingLots?:FifoLot[];tokenDecimals?:Record<string,number>;transactions:TxObservation[];samples:PriceSample[];maxPriceAgeMs?:number|Record<string,number>}):ReplayResult {
+export function replayLedger(args:{agentSlug:string;wallet:Address;opening:Record<TokenId,bigint>;openingTsMs?:number;openingLots?:FifoLot[];tokenDecimals?:Record<string,number>;transactions:TxObservation[];samples:PriceSample[];maxPriceAgeMs?:number|Record<string,number>;profile?:NetworkProfile}):ReplayResult {
   const decimalsOf=(token:TokenId,fallback?:number)=>args.tokenDecimals?.[token]??fallback??tokenMeta(token).decimals;
   const maxAge=(token:TokenId)=>typeof args.maxPriceAgeMs==='number'?args.maxPriceAgeMs:args.maxPriceAgeMs?.[token];
   const balances=new Map<TokenId,bigint>(Object.entries(args.opening).map(([k,v])=>[k,BigInt(v)]));
@@ -97,7 +98,7 @@ export function replayLedger(args:{agentSlug:string;wallet:Address;opening:Recor
   }
   for(const tx of txs){
 
-    const classified=classifyActivity(tx),tokenDeltas=new Map<TokenId,{raw:bigint;decimals:number;symbol:string}>();
+    const classified=classifyActivity(tx,args.profile??MAINNET_PROFILE),tokenDeltas=new Map<TokenId,{raw:bigint;decimals:number;symbol:string}>();
     for(const d of tx.deltas){const old=tokenDeltas.get(d.token);tokenDeltas.set(d.token,{...d,raw:(old?.raw??0n)+d.raw});}
     const agentIsSender=tx.from.toLowerCase()===args.wallet.toLowerCase();
     const feeRaw=agentIsSender?tx.gasLimit*tx.effectiveGasPrice:0n;

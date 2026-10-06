@@ -7,16 +7,16 @@ import type { PrivateKeyAccount } from 'viem/accounts';
 import { DEFAULT_POLICY,parsePolicy } from '../src/policy.ts';
 import { SpendLedger } from '../src/spend-ledger.ts';
 import { executeSwap } from '../src/trade.ts';
-import { ERC20_ABI,PRICE_FEEDS,USDC,WMON } from '../src/venue.ts';
+import { ERC20_ABI,PRICE_FEEDS,USDC,WMON,UNISWAP_V2_FACTORY,UNISWAP_V2_ROUTER,getSignerNetworkProfile } from '../src/venue.ts';
 
 const wallet='0x00000000000000000000000000000000000000aa' as const,account={address:wallet} as unknown as PrivateKeyAccount;
 const pair='0x00000000000000000000000000000000000000cc' as const;
 function setup(patch:Record<string,unknown>={}){const dir=mkdtempSync(join(tmpdir(),'trade-test-'));chmodSync(dir,0o700);const policy=parsePolicy({...DEFAULT_POLICY,walletAddress:wallet,perTradeLimitUsd:50,perDayLimitUsd:100,...patch});return {dir,policy};}
-function mocked(options:{failCall?:boolean;allowance?:bigint;quote?:bigint;reserves?:[bigint,bigint];extraMover?:boolean}={}){
+function mocked(options:{failCall?:boolean;allowance?:bigint;quote?:bigint;reserves?:[bigint,bigint];extraMover?:boolean;stalePrice?:boolean}={}){
   let sends=0,allowance=options.allowance??0n,trace=0;const now=Date.now(),inputRaw=100_000_000_000_000_000n,outputRaw=options.quote??10_000_000n;
   const client={
     readContract:async(args:{address:string;functionName:string;args?:readonly unknown[]})=>{
-      if(args.functionName==='getPriceUnsafe')return {price:args.args?.[0]===PRICE_FEEDS.WMON?100n:1n,conf:0n,expo:0,publishTime:BigInt(Math.floor(now/1000))};
+      if(args.functionName==='getPriceUnsafe')return {price:args.args?.[0]===PRICE_FEEDS.WMON?100n:1n,conf:0n,expo:0,publishTime:BigInt(Math.floor(now/1000)-(options.stalePrice?86_400:0))};
       if(args.functionName==='getAmountsOut')return [args.args?.[0]??0n,outputRaw];
       if(args.functionName==='getPair')return pair;
       if(args.functionName==='token0')return WMON;
@@ -82,6 +82,15 @@ it('does not send when the daily budget including gas is already exhausted',asyn
   const {dir,policy}=setup(),ledger=new SpendLedger(dir,policy),m=mocked();ledger.reserve(50,'prior-1',`0x${'01'.repeat(32)}`,m.now);ledger.reserve(45,'prior-2',`0x${'02'.repeat(32)}`,m.now);
   await expect(executeSwap(intent,{client:m.client,walletClient:m.walletClient,account,policy,ledger,now:()=>m.now})).rejects.toThrow(/per-day/);
   expect(m.sent()).toBe(0);expect(ledger.read(m.now).usedUsd).toBe(95);
+});
+it('uses only explicitly enabled estimated fixed prices on testnet when Pyth samples are stale',async()=>{
+  const env={MONAD_NETWORK:'testnet',TESTNET_V2_ROUTER:UNISWAP_V2_ROUTER,TESTNET_V2_FACTORY:UNISWAP_V2_FACTORY,TESTNET_USDC:USDC,TESTNET_WMON:WMON};
+  const policy=parsePolicy({...DEFAULT_POLICY,network:'testnet',chainId:10143,walletAddress:wallet},env),profile=getSignerNetworkProfile('testnet',env),dir=mkdtempSync(join(tmpdir(),'trade-test-'));chmodSync(dir,0o700);
+  const ledger=new SpendLedger(dir,policy),m=mocked({stalePrice:true});
+  const result=await executeSwap(intent,{client:m.client,walletClient:m.walletClient,account,policy,ledger,now:()=>m.now,profile,testnetFixedPrices:true,testnetMonPriceUsd:0.25});
+  expect(result.priceQuality).toBe('estimated');expect(result.priceSource).toBe('testnet-fixed-prices');
+  const main=setup(),stale=mocked({stalePrice:true});
+  await expect(executeSwap(intent,{client:stale.client,walletClient:stale.walletClient,account,policy:main.policy,ledger:new SpendLedger(main.dir,main.policy),now:()=>stale.now,profile:getSignerNetworkProfile('mainnet'),testnetFixedPrices:true,testnetMonPriceUsd:0.25})).rejects.toThrow(/stale/);
 });
 it('refuses a signer wallet that does not match policy before any RPC send',async()=>{
   const {dir,policy}=setup(),ledger=new SpendLedger(dir,policy),m=mocked(),other={address:'0x00000000000000000000000000000000000000bb'} as unknown as PrivateKeyAccount;
