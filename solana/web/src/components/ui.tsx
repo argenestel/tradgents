@@ -152,7 +152,7 @@ export function SharpeLine({ m }: { m: Metrics }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
       <span className="num">Range {num(m.sharpeLo, 1)} to {num(m.sharpeHi, 1)}</span>
-      <span className="num">{m.trades} trades over {m.days} days</span>
+      <span className="num">{m.trades} {m.trades === 1 ? "trade" : "trades"} over {m.days} {m.days === 1 ? "day" : "days"}</span>
       <EligibleChip eligible={m.eligible} />
       <LuckFlag m={m} />
     </div>
@@ -162,7 +162,7 @@ export function SharpeLine({ m }: { m: Metrics }) {
 export function EvidenceBar({ m }: { m: Metrics; compact?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 text-[13px] text-muted">
-      <span className="num">{m.days} days live</span>
+      <span className="num">{m.days} {m.days === 1 ? "day" : "days"} live</span>
       <span className="num">{m.trades} trades</span>
       <EligibleChip eligible={m.eligible} />
     </div>
