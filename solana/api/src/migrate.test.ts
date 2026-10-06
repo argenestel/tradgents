@@ -5,7 +5,7 @@ import { openDb } from './pg';
 
 it('applies migrations once, enables and forces RLS on every table, and is idempotent', async () => {
   const db = await openDb('memory:');
-  expect(await migrate(db)).toEqual(['0001_init.sql', '0002_roles.sql']);
+  expect(await migrate(db)).toEqual(['0001_init.sql', '0002_roles.sql', '0003_split_roles.sql']);
   expect(await migrate(db)).toEqual([]);
   const tables = await db.query<{ tablename: string; rowsecurity: boolean; forcerowsecurity: boolean }>(
     "select c.relname as tablename, c.relrowsecurity as rowsecurity, c.relforcerowsecurity as forcerowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='solana' and c.relkind='r' and c.relname <> 'schema_migrations'");

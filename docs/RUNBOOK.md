@@ -14,12 +14,13 @@ Everything here is run by the owner. None of it needs the platform to hold anyon
 2. Run the migrations with the owner role (the `postgres` user), from the direct connection:
    - Solana: `cd solana/api && DATABASE_URL_DIRECT=postgres://postgres:...@db.<ref>.supabase.co:5432/postgres pnpm migrate`
    - Monad: `cd monad/api && DATABASE_URL_DIRECT=... pnpm migrate`
-3. Create the login role the apps use (once per chain schema set), in the SQL editor:
+3. Create two login roles (once per chain schema set), in the SQL editor:
    ```sql
-   create role tradgents_api login password '<long random>' in role tradgents_app;
+   create role tradgents_api    login password '<long random>' in role tradgents_read;  -- the public API: reads, plus signed writes only
+   create role tradgents_worker login password '<long random>' in role tradgents_app;   -- the indexer: full access to its tables
    ```
-   The `tradgents_app` group role and its policies are created by the migrations. The app role cannot read `schema_migrations`, create tables, or bypass row level security. Never run the apps as `postgres` or `service_role`.
-4. Connection strings: `DATABASE_URL` is the transaction pooler (port 6543), `DATABASE_URL_DIRECT` the direct connection (port 5432), both with the `tradgents_api` user.
+   The group roles and their policies come from the migrations. Neither role can read `schema_migrations`, create tables, or bypass row level security, and a compromised API cannot rewrite raw chain data, prices, trades or stats. Never run the apps as `postgres` or `service_role`.
+4. Connection strings: the API uses `DATABASE_URL`, the transaction pooler (port 6543), as `tradgents_api`. The worker uses `DATABASE_URL_DIRECT`, the direct connection (port 5432), as `tradgents_worker` (it can set `DATABASE_URL` to the same value).
 5. Turn on point-in-time recovery (paid tier). Write down your RPO and RTO, and rehearse a restore plus a full replay (worker rebuilds from `raw_transactions` and `price_samples`).
 
 ## 2. Registry contracts (mainnet)
