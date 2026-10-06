@@ -1,4 +1,4 @@
-import { LAMPORTS, USDC_UNIT } from './devnet';
+const LAMPORTS = 1e9, USDC_UNIT = 1e6;
 
 /**
  * Price of 1 SOL in devUSDC from the Orca devnet pool's own sqrtPrice (mintA = wSOL, 9 decimals; mintB = devUSDC, 6).

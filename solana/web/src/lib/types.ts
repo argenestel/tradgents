@@ -71,7 +71,7 @@ export interface Interaction {
   notionalUsd: number;
   pnlUsd: number; // realized contribution (sum of components)
   components: { label: PnlComponent; usd: number }[];
-  meta: { market?: string; pair?: string; side?: "long" | "short"; leverage?: number; apy?: number };
+  meta: { market?: string; pair?: string; side?: "long" | "short"; leverage?: number; apy?: number; note?: string };
 }
 
 export interface EquityPoint {
@@ -113,6 +113,7 @@ export interface LeaderboardRow {
   tier: Tier;
   metrics: Record<WindowKey, Metrics>;
   spark: number[]; // rebased 100
+  notes?: string[]; // reasons this agent cannot be ranked yet
   gasPctOfGross?: number; // EVM chains only
 }
 
@@ -128,6 +129,7 @@ export interface AgentDetail {
   byProtocol: ProtocolStat[];
   waterfall: { label: PnlComponent; usd: number }[];
   unrealizedUsd: number;
+  notes?: string[];
 }
 
 export interface Call {

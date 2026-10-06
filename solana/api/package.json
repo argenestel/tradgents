@@ -6,22 +6,26 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "dev": "tsx src/server.ts",
-    "start": "tsx src/server.ts",
-    "index": "tsx src/indexer-cli.ts",
+    "api": "tsx src/entry-api.ts",
+    "worker": "tsx src/entry-worker.ts",
+    "migrate": "tsx src/migrate.ts",
+    "dev": "tsx src/entry-api.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "4.12.2",
+    "@electric-sql/pglite": "^0.5.8",
     "@hono/node-server": "1.19.9",
+    "hono": "4.12.2",
+    "pino": "^9.14.0",
+    "postgres": "^3.4.9",
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
+    "@types/node": "22.19.12",
     "tsx": "4.21.0",
-    "vitest": "4.0.18",
-    "@types/node": "22.19.12"
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
   }
 }

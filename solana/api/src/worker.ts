@@ -1,107 +1,192 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { ORCA_POOL, LAMPORTS, REGISTRY_PROGRAM, RPC_URL, USDC, USDC_UNIT, WSOL } from './devnet';
-import type { Store } from './db';
+import { STABLES, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, WSOL, type Config } from './config';
 import { Indexer } from './indexer';
-import { priceFromWhirlpool } from './pool';
-import { Rpc } from './rpc';
+import { analyze, replay, valueBalances, type ChainTx, type Opening } from './ledger';
+import { log } from './log';
+import type { PriceSource } from './prices';
+import type { Rpc } from './rpc';
+import { buildStats } from './stats';
+import type { Flags, Store } from './store';
 import type { Agent } from './types';
-import { rebuildAgent, type ChainTx } from './wallet';
+
+/** Bump when ledger math changes so stored trades and equity are re-derived from raw transactions. */
+export const REPLAY_VERSION = '4';
+export const WORKER_LOCK = 7_261_002;
+const SAMPLE_EVERY_MS = 30_000, MARK_EVERY_MS = 300_000, STALE_PRICE_MS = 10 * 60_000;
 
 type SigInfo = { signature: string; slot: number; err: unknown; blockTime: number | null };
-/** Bump when the replay math changes so stored trades and equity are re-derived from the raw transactions. */
-export const REPLAY_VERSION = '3';
-export interface Pool { price: number; feeRate: number; at: number }
+export interface Chain { slot: number; balances: Map<string, bigint>; decimals: Map<string, number>; tokenAccounts: number }
 
-export async function fetchPool(rpc: Rpc): Promise<Pool> {
-  const info = await rpc.call<{ value: { data: [string, string] } | null }>('getAccountInfo', [ORCA_POOL, { encoding: 'base64', commitment: 'confirmed' }]);
-  if (!info.value) throw new Error('Orca pool account not found');
-  const data = Buffer.from(info.value.data[0], 'base64');
-  return { price: priceFromWhirlpool(data), feeRate: data.readUInt16LE(45) / 1e6, at: Date.now() };
+/** Native SOL, wSOL and every SPL / Token-2022 balance, all read at one slot. */
+export async function readChain(rpc: Rpc, wallet: string): Promise<Chain> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const bal = await rpc.call<{ context: { slot: number }; value: number }>('getBalance', [wallet, { commitment: 'finalized' }]);
+    const parts = await Promise.all([TOKEN_PROGRAM, TOKEN_2022_PROGRAM].map(programId => rpc.call<{ context: { slot: number }; value: { account: { data: { parsed: { info: { mint: string; tokenAmount: { amount: string; decimals: number } } } } } }[] }>(
+      'getTokenAccountsByOwner', [wallet, { programId }, { encoding: 'jsonParsed', commitment: 'finalized' }])));
+    if (parts.some(p => p.context.slot !== bal.context.slot)) { await sleep(400); continue; } // balances from different slots can double count or miss a trade
+    const balances = new Map<string, bigint>([[WSOL, BigInt(bal.value)]]), decimals = new Map<string, number>([[WSOL, 9]]);
+    let tokenAccounts = 0;
+    for (const p of parts) for (const t of p.value) {
+      const i = t.account.data.parsed.info;
+      balances.set(i.mint, (balances.get(i.mint) ?? 0n) + BigInt(i.tokenAmount.amount)); decimals.set(i.mint, i.tokenAmount.decimals); tokenAccounts++;
+    }
+    return { slot: bal.context.slot, balances, decimals, tokenAccounts };
+  }
+  throw new Error('Could not read wallet balances at a single slot');
 }
 
-/** Fetch and store every transaction touching the wallet that we have not seen. Returns the number stored. */
-export async function pollWallet(store: Store, rpc: Rpc, wallet: string): Promise<number> {
-  const key = `wallet-head:${wallet}`, head = store.state(key);
+/** Store every transaction newer than the cursor (and newer than `afterSlot`), failed ones included: they still paid a fee. */
+export async function pollWallet(store: Store, rpc: Rpc, agent: Agent, afterSlot: number): Promise<number> {
+  const key = `wallet-head:${agent.slug}`, head = await store.state(key);
   const fresh: SigInfo[] = [];
   let before: string | undefined;
   for (;;) {
-    const page = await rpc.call<SigInfo[]>('getSignaturesForAddress', [wallet, { commitment: 'confirmed', limit: 1000, ...(before ? { before } : {}), ...(head ? { until: head } : {}) }]);
-    fresh.push(...page);
-    if (page.length < 1000) break;
+    const page = await rpc.call<SigInfo[]>('getSignaturesForAddress', [agent.wallet, { commitment: 'finalized', limit: 1000, ...(before ? { before } : {}), ...(head ? { until: head } : {}) }]);
+    fresh.push(...page.filter(p => p.slot > afterSlot));
+    if (page.length < 1000 || page.some(p => p.slot <= afterSlot)) break;
     before = page.at(-1)!.signature;
   }
   let stored = 0;
-  for (const info of fresh.reverse()) { // oldest first so a failure leaves the cursor behind the gap
-    if (info.err) continue;
-    const tx = await rpc.call<ChainTx | null>('getTransaction', [info.signature, { commitment: 'confirmed', encoding: 'json', maxSupportedTransactionVersion: 0 }]);
+  for (const info of fresh.reverse()) { // oldest first, so a failure leaves the cursor behind the gap
+    const tx = await rpc.call<ChainTx | null>('getTransaction', [info.signature, { commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 1 }]);
     if (!tx || tx.blockTime == null) throw new Error(`Transaction not yet available: ${info.signature}`);
-    stored += Number(store.db.prepare('INSERT OR IGNORE INTO raw_transactions VALUES(?,?,?,?,?)').run(info.signature, wallet, tx.slot, tx.blockTime, JSON.stringify(tx)).changes);
-    store.setState(key, info.signature); // cursor only moves past transactions we hold
+    await store.tx(async s => { stored += Number(await s.putRaw(info.signature, agent.wallet, tx.slot, tx.blockTime! * 1000, tx)); await s.setState(key, info.signature); });
   }
   return stored;
 }
 
-/** Current wallet value at the pool price: native SOL, wrapped SOL and devUSDC. */
-export async function markWallet(store: Store, rpc: Rpc, agent: Agent, pool: Pool, now: number): Promise<number> {
-  const [bal, tokens] = await Promise.all([
-    rpc.call<{ value: number }>('getBalance', [agent.wallet, { commitment: 'confirmed' }]),
-    rpc.call<{ value: { account: { data: { parsed: { info: { mint: string; tokenAmount: { amount: string } } } } } }[] }>('getTokenAccountsByOwner',
-      [agent.wallet, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed', commitment: 'confirmed' }]),
-  ]);
-  const amount = (mint: string) => tokens.value.filter(t => t.account.data.parsed.info.mint === mint).reduce((s, t) => s + Number(t.account.data.parsed.info.tokenAmount.amount), 0);
-  const sol = (bal.value + amount(WSOL)) / LAMPORTS, usd = sol * pool.price + amount(USDC) / USDC_UNIT;
-  const last = store.db.prepare('SELECT MAX(ts) AS ts FROM equity WHERE agent=?').get(agent.slug) as { ts: number | null };
-  if (last.ts === null) return usd; // nothing to compare against until the first transaction is indexed
-  store.putEquity(agent.slug, { t: Math.max(now, last.ts + 1), usd: Number(usd.toFixed(6)), sol: Number(pool.price.toFixed(6)) }, 0, 'mark');
-  return usd;
+/** The track record starts when the agent registers: record what it held then, at a known slot. */
+export async function ensureOpening(store: Store, rpc: Rpc, prices: PriceSource, agent: Agent, now: number): Promise<Opening & { tokenAccounts: number }> {
+  const existing = await store.opening(agent.slug);
+  if (existing) return { ...existing, rentAccounts: Number(await store.state(`opening-rent:${agent.slug}`) ?? 0), tokenAccounts: 0 };
+  const chain = await readChain(rpc, agent.wallet);
+  const quotes = await prices.get([...chain.balances.keys()].filter(m => (chain.balances.get(m) ?? 0n) > 0n));
+  const priceMap: Record<string, number> = {};
+  for (const [m, q] of quotes) priceMap[m] = q.usd;
+  const balances = Object.fromEntries([...chain.balances].map(([m, raw]) => [m, { raw: raw.toString(), decimals: chain.decimals.get(m) ?? 0 }]));
+  await store.tx(async s => {
+    await s.putOpening(agent.slug, { slot: chain.slot, tsMs: now, balances, prices: priceMap });
+    await s.setState(`opening-rent:${agent.slug}`, String(chain.tokenAccounts));
+    await s.putSamples([...quotes].map(([mint, q]) => ({ mint, ts: now, usd: q.usd, liquidity: Number.isFinite(q.liquidityUsd) ? q.liquidityUsd : null, source: q.source })));
+  });
+  return { slot: chain.slot, tsMs: now, balances, prices: priceMap, rentAccounts: chain.tokenAccounts, tokenAccounts: chain.tokenAccounts };
+}
+
+export async function symbolFor(store: Store, mint: string, fetcher: typeof fetch = fetch): Promise<string | undefined> {
+  const cached = await store.state(`symbol:${mint}`);
+  if (cached !== undefined) return cached || undefined;
+  if (Object.hasOwn(STABLES, mint) || mint === WSOL) return undefined;
+  try {
+    const res = await fetcher(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, { signal: AbortSignal.timeout(8000) });
+    const rows = res.ok ? await res.json() as { id: string; symbol?: string }[] : [];
+    const sym = rows.find(r => r.id === mint)?.symbol?.replace(/[^\w$.-]/g, '').slice(0, 12);
+    await store.setState(`symbol:${mint}`, sym ?? '');
+    return sym;
+  } catch { return undefined; }
+}
+
+/** Deposits and positions we cannot explain are never guessed at: they become flags that block ranking. */
+export async function rebuild(store: Store, agent: Agent, prices: { sampleSince: number }, now: number): Promise<{ balances: Map<string, bigint>; rentAccounts: number; flags: Flags } | undefined> {
+  const opening = await store.opening(agent.slug);
+  if (!opening) return undefined;
+  const rent = Number(await store.state(`opening-rent:${agent.slug}`) ?? 0);
+  const raws = await store.rawFor(agent.wallet, opening.slot);
+  const facts = raws.flatMap(r => { const f = analyze(agent.wallet, r.signature, r.data as ChainTx); return f ? [f] : []; });
+  const mints = [...new Set([WSOL, ...Object.keys(opening.balances), ...facts.flatMap(f => [...f.actual.keys()])])];
+  const samples = await store.samples(mints, Math.min(opening.tsMs, prices.sampleSince) - 3_600_000);
+  const symbols = new Map<string, string>();
+  for (const m of mints) { const s = await symbolFor(store, m); if (s) symbols.set(m, s); }
+  const result = replay(agent, facts, { opening: { ...opening, rentAccounts: rent }, samples, symbols });
+  await store.replaceDerived(agent.slug, { trades: result.trades, posts: result.posts, points: result.points });
+  const first = result.points[0];
+  await store.updateAgent({ ...agent, startedAt: first ? first.ts : agent.startedAt, status: result.points.length && now - result.points.at(-1)!.ts < 7 * 86_400_000 ? 'live' : 'stale',
+    protocols: [...new Set([...agent.protocols, ...result.trades.map(t => t.protocol)])] });
+  return { balances: result.balances, rentAccounts: result.rentAccounts, flags: { unsupportedTs: result.unsupported.map(u => u.ts), unpricedTouchTs: result.unpricedTouches.map(u => u.ts), unpricedHeld: result.unpriced, drift: false } };
 }
 
 /** Registry events become the on-chain verification badge and bond shown on the profile. */
-export function projectRegistry(store: Store): number {
-  const events = store.db.prepare('SELECT data FROM registry_events ORDER BY slot,ix_index,event_index').all() as { data: string }[];
+export async function projectRegistry(store: Store): Promise<number> {
   const bonds = new Map<string, number>();
-  for (const { data } of events) {
-    const e = JSON.parse(data) as { name: string; fields: Record<string, string | boolean> };
+  for (const e of await store.registryEvents()) {
     const wallet = e.fields.agent_wallet as string | undefined;
     if (!wallet) continue;
-    if (e.name === 'AgentRegistered') bonds.set(wallet, Number(e.fields.bond) / LAMPORTS);
+    if (e.name === 'AgentRegistered') bonds.set(wallet, Number(e.fields.bond) / 1e9);
     else if (e.name === 'BondWithdrawn' || e.name === 'AgentSlashed') bonds.set(wallet, 0);
   }
   let changed = 0;
   for (const [wallet, bondSol] of bonds) {
-    const agent = store.wallet(wallet);
+    const agent = await store.agentByWallet(wallet);
     if (!agent || (agent.bondSol === bondSol && agent.verification !== 'declared')) continue;
-    store.updateAgent({ ...agent, bondSol, verification: agent.verification === 'declared' ? 'wallet_signed' : agent.verification });
+    await store.updateAgent({ ...agent, bondSol, verification: agent.verification === 'declared' ? 'wallet_signed' : agent.verification });
     changed++;
   }
   return changed;
 }
 
-export interface Worker { cycle(): Promise<void>; run(signal: AbortSignal): Promise<void> }
-export function createWorker(store: Store, opts: { rpcUrl?: string; programId?: string; intervalSeconds?: number; markEveryMs?: number } = {}): Worker {
-  const rpc = new Rpc(opts.rpcUrl ?? RPC_URL), registry = new Indexer(store, opts.rpcUrl ?? RPC_URL, opts.programId ?? REGISTRY_PROGRAM);
-  const markEvery = opts.markEveryMs ?? 300_000;
-  const cycle = async () => {
-    const pool = await fetchPool(rpc);
-    store.setState('pool', JSON.stringify(pool));
-    try { await registry.poll(); projectRegistry(store); } catch (e) { console.error('registry poll failed:', (e as Error).message); }
-    for (const agent of store.agents()) {
-      try {
-        const added = await pollWallet(store, rpc, agent.wallet);
-        const trigger = added > 0 || store.state(`rebuilt:${agent.slug}`) !== REPLAY_VERSION;
-        if (trigger) { rebuildAgent(store, agent.slug, { feeRate: pool.feeRate, price: pool.price }); store.setState(`rebuilt:${agent.slug}`, REPLAY_VERSION); }
-        const lastMark = Number(store.state(`marked:${agent.slug}`) ?? 0);
-        if (trigger || Date.now() - lastMark >= markEvery) { await markWallet(store, rpc, agent, pool, Date.now()); store.setState(`marked:${agent.slug}`, String(Date.now())); }
-        if (added) console.log(`${agent.slug}: indexed ${added} new transaction(s)`);
-      } catch (e) { console.error(`${agent.slug}: indexing failed, will retry:`, (e as Error).message); }
+export interface WorkerDeps { store: Store; rpc: Rpc; prices: PriceSource; cfg: Pick<Config, 'programId' | 'POLL_SECONDS'>; now?: () => number }
+export function createWorker(d: WorkerDeps) {
+  const now = d.now ?? Date.now, registry = new Indexer(d.store, d.rpc, d.cfg.programId);
+  const driftSeen = new Map<string, number>();
+
+  /** Sample SOL and everything agents hold, at most every SAMPLE_EVERY_MS. Replays read these samples, never a live price. */
+  async function sample(): Promise<void> {
+    const last = Number(await d.store.state('sampled') ?? 0);
+    if (now() - last < SAMPLE_EVERY_MS) return;
+    const held = new Set<string>([WSOL]);
+    for (const a of await d.store.agents()) for (const m of JSON.parse(await d.store.state(`held:${a.slug}`) ?? '[]') as string[]) held.add(m);
+    const q = await d.prices.get([...held]);
+    if (!q.has(WSOL)) throw new Error('No SOL price: refusing to mark anything this cycle');
+    await d.store.putSamples([...q].map(([mint, p]) => ({ mint, ts: now(), usd: p.usd, liquidity: Number.isFinite(p.liquidityUsd) ? p.liquidityUsd : null, source: p.source })));
+    await d.store.setState('sampled', String(now()));
+  }
+
+  async function agentCycle(agent: Agent): Promise<void> {
+    const t = now();
+    const opening = await ensureOpening(d.store, d.rpc, d.prices, agent, t);
+    const added = await pollWallet(d.store, d.rpc, agent, opening.slot);
+    const stale = (await d.store.state(`rebuilt:${agent.slug}`)) !== REPLAY_VERSION;
+    const lastMark = Number(await d.store.state(`marked:${agent.slug}`) ?? 0);
+    if (!added && !stale && t - lastMark < MARK_EVERY_MS) return;
+    const built = await rebuild(d.store, (await d.store.agent(agent.slug))!, { sampleSince: opening.tsMs }, t);
+    if (!built) return;
+    await d.store.setState(`rebuilt:${agent.slug}`, REPLAY_VERSION);
+    // Mark at a single slot and compare with what the ledger believes. A mismatch twice in a row is flagged and blocks ranking.
+    const chain = await readChain(d.rpc, agent.wallet);
+    await d.store.setState(`held:${agent.slug}`, JSON.stringify([...chain.balances].filter(([, v]) => v > 0n).map(([m]) => m)));
+    const tip = await d.rpc.call<SigInfo[]>('getSignaturesForAddress', [agent.wallet, { commitment: 'finalized', limit: 1 }]);
+    if (!tip.length || tip[0].signature === await d.store.state(`wallet-head:${agent.slug}`)) { // nothing newer than what we replayed
+      const diff = [...new Set([...chain.balances.keys(), ...built.balances.keys()])].filter(m => (chain.balances.get(m) ?? 0n) !== (built.balances.get(m) ?? 0n));
+      if (diff.length) { driftSeen.set(agent.slug, (driftSeen.get(agent.slug) ?? 0) + 1); log.warn({ agent: agent.slug, mints: diff.map(m => m.slice(0, 6)) }, 'ledger differs from chain'); }
+      else driftSeen.delete(agent.slug);
     }
-    store.setState('lastCycle', String(Date.now()));
-  };
-  const run = async (signal: AbortSignal) => {
+    built.flags.drift = (driftSeen.get(agent.slug) ?? 0) >= 2;
+    const solSamples = await d.store.latestSample(WSOL);
+    if (!solSamples || t - solSamples.ts > STALE_PRICE_MS) throw new Error('SOL price is stale; not marking');
+    const px = async (m: string) => { if (Object.hasOwn(STABLES, m)) return 1; const s = await d.store.latestSample(m); return s && t - s.ts <= STALE_PRICE_MS ? s.usd : undefined; };
+    const priced = new Map<string, number>();
+    for (const m of chain.balances.keys()) { const p = await px(m); if (p !== undefined) priced.set(m, p); }
+    const mark = valueBalances(chain.balances, chain.decimals, built.rentAccounts, m => priced.get(m));
+    built.flags.unpricedHeld = mark.unpriced;
+    await d.store.putMark(agent.slug, { t, usd: mark.usd, sol: solSamples.usd });
+    await d.store.setState(`marked:${agent.slug}`, String(t));
+    const fresh = (await d.store.agent(agent.slug))!;
+    await d.store.putStats(agent.slug, buildStats(fresh, await d.store.equity(agent.slug), await d.store.trades(agent.slug), built.flags, t), t);
+    if (added) log.info({ agent: agent.slug, added }, 'indexed new transactions');
+  }
+
+  async function cycle(): Promise<void> {
+    await sample();
+    try { await registry.poll(); await projectRegistry(d.store); } catch (e) { log.error({ err: (e as Error).message }, 'registry poll failed'); }
+    for (const agent of await d.store.agents()) {
+      try { await agentCycle(agent); } catch (e) { log.error({ agent: agent.slug, err: (e as Error).message }, 'agent cycle failed; will retry'); }
+    }
+    await d.store.setState('lastCycle', String(now()));
+  }
+  async function run(signal: AbortSignal) {
     while (!signal.aborted) {
-      try { await cycle(); } catch (e) { console.error('worker cycle failed:', (e as Error).message); }
-      try { await sleep((opts.intervalSeconds ?? 10) * 1000, undefined, { signal }); } catch { /* aborted */ }
+      try { await cycle(); } catch (e) { log.error({ err: (e as Error).message }, 'worker cycle failed'); }
+      try { await sleep(d.cfg.POLL_SECONDS * 1000, undefined, { signal }); } catch { /* aborted */ }
     }
-  };
+  }
   return { cycle, run };
 }

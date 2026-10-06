@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { Store } from './db';
 import { decodeBase58, encodeBase58 } from './encoding';
+import type { Rpc } from './rpc';
+import type { Store } from './store';
 
 const fields = {
   ConfigUpdated: [['admin', 'key'], ['guardian', 'key'], ['treasury', 'key'], ['minimum_bond', 'u64'], ['cooldown', 'i64']],
@@ -38,7 +39,7 @@ export interface Transaction {
   slot: number;
   meta: { err: unknown; logMessages: string[] | null } | null;
 }
-export function ingestTransaction(store: Store, programId: string, signature: string, tx: Transaction): number {
+export async function ingestTransaction(store: Store, programId: string, signature: string, tx: Transaction): Promise<number> {
   if (!tx.meta) throw new Error(`Missing transaction metadata: ${signature}`);
   if (tx.meta.err) return 0;
   if (!tx.meta.logMessages) throw new Error(`Missing logs: ${signature}`);
@@ -57,51 +58,41 @@ export function ingestTransaction(store: Store, programId: string, signature: st
       if (event) events.push({ ix, index: eventIndex++, event });
     }
   }
-  return store.transaction(() => {
+  return store.tx(async s => {
     let count = 0;
-    for (const e of events) count += Number(store.db.prepare('INSERT INTO registry_events(signature,ix_index,event_index,slot,data) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING')
-      .run(signature, e.ix, e.index, tx.slot, JSON.stringify(e.event)).changes);
+    for (const e of events) count += Number(await s.putRegistryEvent(signature, e.ix, e.index, tx.slot, e.event));
     return count;
   });
 }
 type SignatureInfo = { signature: string; slot: number; err: unknown };
 export class Indexer {
-  constructor(readonly store: Store, readonly rpcUrl: string, readonly programId: string, readonly fetcher: typeof fetch = fetch) {
+  constructor(readonly store: Store, readonly rpc: Rpc, readonly programId: string) {
     if (decodeBase58(programId).length !== 32) throw new Error('PROGRAM_ID must be a 32-byte base58 public key');
-    if (!/^https?:/.test(rpcUrl)) throw new Error('RPC_URL must be HTTP(S)');
-  }
-  async rpc<T>(method: string, params: unknown[]): Promise<T> {
-    const response = await this.fetcher(this.rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`RPC HTTP ${response.status}`);
-    const body = await response.json() as { result?: T; error?: { message: string } };
-    if (body.error || body.result === undefined) throw new Error(body.error?.message ?? 'Missing RPC result');
-    return body.result;
   }
   /** Fetch every page before advancing the cursor; retries safely replay any committed events. */
   async poll(): Promise<{ transactions: number; events: number }> {
-    const stateKey = `head:${this.programId}:${this.rpcUrl}`;
-    const head = (this.store.db.prepare('SELECT value FROM indexer_state WHERE key=?').get(stateKey) as { value: string } | undefined)?.value;
+    const stateKey = `head:${this.programId}`;
+    const head = await this.store.state(stateKey);
     let before: string | undefined, newest: string | undefined, transactions = 0, events = 0;
     const seen = new Set<string>();
-    while (true) {
-      const page = await this.rpc<SignatureInfo[]>('getSignaturesForAddress', [this.programId, { commitment: 'finalized', limit: 1000, ...(before ? { before } : {}), ...(head ? { until: head } : {}) }]);
+    for (;;) {
+      const page = await this.rpc.call<SignatureInfo[]>('getSignaturesForAddress', [this.programId, { commitment: 'finalized', limit: 1000, ...(before ? { before } : {}), ...(head ? { until: head } : {}) }]);
       if (!page.length) break;
       newest ??= page[0].signature;
       for (const info of page) {
         if (seen.has(info.signature)) throw new Error('RPC pagination repeated a signature');
         seen.add(info.signature);
         if (!info.err) {
-          const tx = await this.rpc<Transaction | null>('getTransaction', [info.signature, { commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 0 }]);
+          const tx = await this.rpc.call<Transaction | null>('getTransaction', [info.signature, { commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 1 }]);
           if (!tx) throw new Error(`Finalized transaction unavailable: ${info.signature}`);
-          events += ingestTransaction(this.store, this.programId, info.signature, tx);
+          events += await ingestTransaction(this.store, this.programId, info.signature, tx);
         }
         transactions++;
       }
       before = page.at(-1)!.signature;
       if (page.length < 1000) break;
     }
-    if (newest) this.store.db.prepare('INSERT INTO indexer_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(stateKey, newest);
+    if (newest) await this.store.setState(stateKey, newest);
     return { transactions, events };
   }
 }

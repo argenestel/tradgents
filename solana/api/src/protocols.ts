@@ -19,6 +19,8 @@ export const PROTOCOLS: Record<ProtocolId, ProtocolMeta> = {
   marinade: { id: "marinade", name: "Marinade", category: "Liquid staking", color: "#5eead4", blurb: "Liquid staking (mSOL). Profit is staking yield accruing into the token's exchange rate; risks are depeg and validator performance." },
   meteora: { id: "meteora", name: "Meteora", category: "Concentrated LP", color: "#f472b6", blurb: "Dynamic/concentrated liquidity pools. Profit is trading fees minus impermanent loss; out-of-range positions earn nothing." },
   orca: { id: "orca", name: "Orca", category: "Spot swaps / concentrated LP", color: "#38bdf8", blurb: "Concentrated-liquidity AMM. Spot swaps realize price gain or loss minus the pool fee; LP positions trade fees against impermanent loss." },
+  raydium: { id: "raydium", name: "Raydium", category: "Spot / AMM", color: "#6d5efc", blurb: "AMM and concentrated-liquidity pools. Spot swaps realize price gain or loss; fees and slippage sit inside the execution price." },
+  other: { id: "other", name: "Other venues", category: "Spot", color: "#64748b", blurb: "Swaps on venues without their own page yet. Same accounting: price gain or loss against what the asset cost." },
   pumpfun: { id: "pumpfun", name: "Pump.fun", category: "Launchpad / memecoins", color: "#facc15", blurb: "Bonding-curve token launches. Extremely high variance and survivorship bias — treat any short track record as noise." },
   jito: { id: "jito", name: "Jito", category: "Liquid staking", color: "#a3e635", blurb: "Liquid staking (JitoSOL) with MEV-boosted yield. Profit is staking + MEV rewards; same depeg/validator risks as other LSTs." },
 };

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Let Codex trade as a Tradgents agent on Solana devnet.
-# Needs: the API running (TRADGENTS_API, default http://127.0.0.1:8787) and a funded, registered devnet keypair.
+# Let Codex trade as a Tradgents agent on Solana mainnet, through your signer.
+# Run the signer first, as yourself, in another terminal:  pnpm signer run --policy ~/.tradgents-signer/policy.json
+# Codex gets the socket, never the key. Keep the limits in policy.json small.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export TRADGENTS_KEYPAIR="${TRADGENTS_KEYPAIR:-$HOME/.config/solana/tradgents-codex-agent.json}"
-[ -f "$TRADGENTS_KEYPAIR" ] || { echo "No keypair at $TRADGENTS_KEYPAIR" >&2; exit 1; }
+export TRADGENTS_SOCKET="${TRADGENTS_SOCKET:-$HOME/.tradgents-signer/signer.sock}"
+[ -S "$TRADGENTS_SOCKET" ] || { echo "No signer socket at $TRADGENTS_SOCKET. Start the signer first." >&2; exit 1; }
+: "${TRADGENTS_API:?Set TRADGENTS_API to the Tradgents API url}"
 exec codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
-  "You are the trading agent described in AGENTS.md in this folder. Use the CLI exactly as it describes. \
-Task: run status, then make 4 to 6 small swaps (at most 0.15 SOL each) on the Orca devnet pool. Quote before each swap and form a short view from what you see, \
-for example whether the quoted price moved since your last trade. Post one thesis before your first swap and one note after your last. \
-Finish by running status and reporting each swap signature, why you made it, and your final balances. Do not read or print the keypair file."
+  "You are the trading agent described in AGENTS.md in this folder. Use only the tradgents commands it lists. \
+Task: run status, then make up to 4 small swaps within the limits you see, quoting before each one and giving a short reason. \
+Post one note before your first swap and one after your last. Finish with status and report each signature, your reason, and final balances."
