@@ -22,6 +22,7 @@ export const PROTOCOLS: Record<ProtocolId, ProtocolMeta> = {
   magma: { id: "magma", name: "Magma", category: "Liquid staking", color: "#fb923c", confidence: "high", blurb: "Liquid staking (gMON). Profit is staking yield accruing into the token's exchange rate; risks are depeg on exit and validator performance." },
   upshift: { id: "upshift", name: "Upshift", category: "Yield vaults", color: "#34d399", confidence: "high", blurb: "Yield vaults. Profit is vault share-price growth net of fees; strategy and redemption-delay risk sit with the vault operator." },
   perpl: { id: "perpl", name: "Perpl", category: "Perps", color: "#f87171", confidence: "med", blurb: "Perpetual futures. Profit is price PnL plus funding, minus fees; leverage amplifies both directions. Fill-level data depends on an ABI we are still confirming." },
+  other: { id: "other", name: "Other venues", category: "Spot", color: "#64748b", confidence: "low", blurb: "Swaps on venues without their own page yet. Same accounting: price gain or loss against what the asset cost." },
   nadfun: { id: "nadfun", name: "nad.fun", category: "Launchpad / memecoins", color: "#facc15", confidence: "high", blurb: "Bonding-curve token launches. Extremely high variance and survivorship bias — any short track record is mostly noise." },
 };
 
@@ -39,6 +40,8 @@ export const COMPONENTS: Record<PnlComponent, { label: string; estimated?: boole
   rewards: { label: "Rewards / points (est.)", estimated: true },
   gas: { label: "Gas (limit × price)" },
   mevLeak: { label: "MEV leakage (est.)", estimated: true },
+  priorityFee: { label: "Priority fees" },
+  tip: { label: "Tips" },
 };
 
 export const COMPONENT_ORDER: PnlComponent[] = [
@@ -138,6 +141,14 @@ export const INTERACTIONS: Record<string, InteractionMeta> = {
   },
 };
 
+const SPOT_SWAP: InteractionMeta = {
+  title: (i) => `Swapped ${i.meta.pair ?? ""}`,
+  how: "Spot swap. Selling realizes gain or loss against what the asset cost; buying opens a position and costs only fees and slippage.",
+  risks: ["Slippage and price impact in thin pools", "Tokens with no reliable market price can't be scored", "Price moves against the position"],
+  closes: true,
+};
+for (const id of ["kuru", "uniswap", "nadfun", "other"]) INTERACTIONS[`${id}.swap`] = SPOT_SWAP;
+
 export function interactionMeta(protocol: ProtocolId, kind: InteractionKind): InteractionMeta | undefined {
   return INTERACTIONS[`${protocol}.${kind}`];
 }
@@ -147,6 +158,8 @@ export function interactionTitle(i: Interaction): string {
 }
 
 export function isClosing(i: Interaction): boolean {
+  // A spot swap only counts toward win rate when it realized a gain or loss (a sell), not when it opened a position.
+  if (i.kind === "swap") return i.components.some((c) => c.label === "price");
   return interactionMeta(i.protocol, i.kind)?.closes ?? false;
 }
 
@@ -165,22 +178,4 @@ export const VERIFICATION: Record<Verification, { label: string; hint: string }>
   declared: { label: "Declared", hint: "Creator typed this address; no proof of control." },
   wallet_signed: { label: "Wallet-signed", hint: "Creator proved control of the agent address with an EIP-712 signature (ERC-1271 for smart accounts)." },
   attested: { label: "Attested", hint: "Agent runs on the Tradgents connector with a scoped session key, logging decisions alongside trades." },
-};
-
-export const ACCOUNT_TYPES = {
-  eoa: { label: "EOA", hint: "Plain externally-owned account. The agent holds a full-power key — least safe for autonomous trading." },
-  eip7702: { label: "EIP-7702", hint: "EOA delegated to smart-account code. Note: a delegated EOA cannot drop below 10 MON on Monad." },
-  erc4337: { label: "Smart account", hint: "ERC-4337 smart account. Supports scoped session keys and spend limits." },
-} as const;
-
-/** Human labels for the contract a copy-trade would approve/spend through. Addresses come from the backend catalog, never hard-coded here. */
-export const SPENDER_LABEL: Record<ProtocolId, string> = {
-  kuru: "Kuru router",
-  uniswap: "Uniswap Universal Router",
-  morpho: "Morpho",
-  curvance: "Curvance market",
-  magma: "Magma staking",
-  upshift: "Upshift vault",
-  perpl: "Perpl exchange",
-  nadfun: "nad.fun curve",
 };

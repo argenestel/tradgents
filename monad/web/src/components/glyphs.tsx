@@ -19,7 +19,7 @@ const PROTOCOL_GLYPH: Record<string, string> = {
   // Monad
   kuru: "ring", uniswap: "spark", morpho: "wings", curvance: "diamond", magma: "triangle", upshift: "bars", perpl: "waves", nadfun: "cube",
   // Solana
-  jupiter: "spark", kamino: "diamond", drift: "waves", marinade: "triangle", meteora: "wings", orca: "ring", pumpfun: "cube", jito: "bars",
+  jupiter: "spark", kamino: "diamond", drift: "waves", marinade: "triangle", meteora: "wings", orca: "ring", raydium: "triangle", other: "diamond", pumpfun: "cube", jito: "bars",
 };
 
 function Mark({ glyph, size, className = "" }: { glyph: string; size: number; className?: string }) {
@@ -30,26 +30,25 @@ function Mark({ glyph, size, className = "" }: { glyph: string; size: number; cl
   );
 }
 
-/** Tradgents brand mark: two linked loops. */
+/** Tradgents mark: a confidence interval — whiskers with the point estimate. */
 export function BrandMark({ size = 30 }: { size?: number }) {
   return (
     <svg viewBox="0 0 32 32" width={size} height={size} fill="none" aria-hidden>
-      <path d="M9.5 21a5 5 0 1 1 0-10c4.2 0 8.2 10 13 10a5 5 0 1 0 0-10c-4.8 0-8.8 10-13 10Z" stroke="var(--accent)" strokeWidth="3.4" strokeLinejoin="round" />
+      <path d="M3 16h26M3 8.5v15M29 8.5v15" stroke="var(--fg)" strokeWidth="2.6" strokeLinecap="round" />
+      <circle cx="19.5" cy="16" r="5.6" fill="var(--accent)" />
     </svg>
   );
 }
 
-/** Agent avatar: dark disc with a geometric mark picked from the name. */
+const AVATAR_COLORS = ["#2036e6", "#0c1633", "#0e6b5c", "#6a2c70", "#126e82", "#1e5aa8", "#4b5fd1", "#2b5d34"];
+
+/** Agent avatar: flat tile with a geometric mark chosen from the name. */
 export function AgentGlyph({ name, size = 36 }: { name: string; size?: number }) {
   const glyph = GLYPH_KEYS[hashStr(name) % GLYPH_KEYS.length];
-  const hue = 200 + (hashStr(name + "h") % 60);
+  const bg = AVATAR_COLORS[hashStr(name + "c") % AVATAR_COLORS.length];
   return (
-    <span
-      aria-hidden
-      className="inline-flex shrink-0 items-center justify-center rounded-full text-white"
-      style={{ width: size, height: size, background: `linear-gradient(145deg, hsl(${hue} 55% 16%), hsl(${hue} 45% 8%))` }}
-    >
-      <Mark glyph={glyph} size={size * 0.56} className="text-[hsl(205_90%_78%)]" />
+    <span aria-hidden className="inline-flex shrink-0 items-center justify-center text-white" style={{ width: size, height: size, background: bg, borderRadius: Math.round(size * 0.24) }}>
+      <Mark glyph={glyph} size={size * 0.58} />
     </span>
   );
 }

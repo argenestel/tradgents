@@ -1,21 +1,23 @@
 @import "tailwindcss";
 
 :root {
-  /* Light "clean fintech" system from design/*.png. */
-  --bg: #f1f5fb;
+  /* "Interval-first" identity: survey paper, ink, and a single loud cobalt plane. */
+  --bg: #f3f5f2;
   --surface: #ffffff;
-  --surface-2: #f6f8fc;
-  --line: #e2e8f2;
-  --fg: #0e1a30;
-  --muted: #5a6a85;
-  --accent: #1f4fd8; /* Monad: blue. Solana app uses violet (#6d3df0) */
-  --accent-soft: #e8eefe;
-  --gain: #12874a;
-  --loss: #d8302f;
-  --warn: #a35a00;
-  --warn-bg: #fff6df;
-  --estimate: #a35a00;
-  --shadow: 0 1px 2px rgba(14, 26, 48, 0.04), 0 8px 24px rgba(14, 26, 48, 0.05);
+  --surface-2: #e8ece7;
+  --line: #d3d9d1;
+  --fg: #0c1633;
+  --muted: #546079;
+  --accent: #5a35f0; /* Monad violet: interactive + the forest-plot plane (Solana uses cobalt) */
+  --accent-deep: #4322c4;
+  --accent-soft: #ece6fe;
+  --gain: #0b7f55;
+  --loss: #cf3030;
+  --warn: #8f5600; /* amber text on paper */
+  --warn-bg: #fbefd0;
+  --luck: #ffc247; /* amber on the cobalt plane */
+  --estimate: #8f5600;
+  --shadow: none;
   color-scheme: light;
 }
 
@@ -32,9 +34,11 @@
   --color-loss: var(--loss);
   --color-warn: var(--warn);
   --color-warn-bg: var(--warn-bg);
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-serif: var(--font-serif-display), Georgia, serif;
-  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+  --color-accent-deep: var(--accent-deep);
+  --color-luck: var(--luck);
+  --font-sans: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-text), Georgia, serif;
+  --font-mono: var(--font-display), ui-sans-serif, system-ui, sans-serif;
 }
 
 html {
@@ -42,27 +46,41 @@ html {
 }
 
 body {
-  font-size: 14px;
+  font-size: 15px;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
-/* tabular numerals everywhere money/metrics appear */
+/* Everything is the grotesque by default; running text, captions and agent claims are the serif. */
+p, blockquote, figcaption, .serif { font-family: var(--font-serif); line-height: 1.55; }
+
+.num { font-family: var(--font-sans); }
+
 .num {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -0.005em;
 }
 
-/* hatched fill = estimated value, never color alone */
+/* Display type: heavy, tight, slightly condensed where the font allows. */
+.display {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+  font-variation-settings: "wdth" 90;
+  text-wrap: balance;
+}
+
+/* Estimated values: hatched, never colour alone. */
 .hatch {
-  background-image: repeating-linear-gradient(
-    135deg,
-    rgba(163, 90, 0, 0.45) 0 4px,
-    rgba(163, 90, 0, 0.12) 4px 8px
-  );
+  background-image: repeating-linear-gradient(135deg, rgba(143, 86, 0, 0.5) 0 4px, rgba(143, 86, 0, 0.14) 4px 8px);
+}
+.hatch-luck {
+  background-image: repeating-linear-gradient(135deg, rgba(255, 194, 71, 0.95) 0 3px, rgba(255, 194, 71, 0.28) 3px 7px);
 }
 
 :focus-visible {
@@ -70,13 +88,21 @@ body {
   outline-offset: 2px;
   border-radius: 4px;
 }
+.on-plane :focus-visible { outline-color: #fff; }
 
-::selection {
-  background: var(--accent-soft);
+::selection { background: var(--accent); color: #fff; }
+
+/* The one orchestrated moment: forest-plot intervals draw out from the zero line. */
+@keyframes draw {
+  from { transform: scaleX(0); opacity: 0.2; }
+  to { transform: scaleX(1); opacity: 1; }
 }
-
-/* serif display face for page titles and names */
-.display {
-  font-family: var(--font-serif);
-  letter-spacing: -0.02em;
+.draw {
+  transform-origin: var(--origin, 50%) 50%;
+  animation: draw 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .draw { animation: none; }
+  * { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
 }

@@ -1,49 +1,52 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono, Inter, Source_Serif_4 } from "next/font/google";
+import { Bricolage_Grotesque, Newsreader } from "next/font/google";
 import Link from "next/link";
+import { CHAIN_UI } from "@/lib/chain";
 import { Header } from "@/components/Header";
 import type { SearchItem } from "@/components/SearchBox";
-import { getLeaderboard } from "@/lib/api";
+import { getLeaderboard, getMeta } from "@/lib/api";
 import { PROTOCOL_LIST } from "@/lib/protocols";
-import { Providers } from "@/components/Providers";
-import { WalletButton } from "@/components/WalletButton";
-import { IS_DEMO } from "@/lib/config";
+import { EXPLORER, REGISTRY } from "@/lib/config";
 import "./globals.css";
 
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
-const serif = Source_Serif_4({ variable: "--font-serif-display", subsets: ["latin"], style: ["normal", "italic"] });
-const plexMono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"], weight: ["400", "500", "600"] });
+const display = Bricolage_Grotesque({ variable: "--font-display", subsets: ["latin"], axes: ["wdth", "opsz"] });
+const text = Newsreader({ variable: "--font-text", subsets: ["latin"], style: ["normal", "italic"], axes: ["opsz"] });
+
+/** Live data: regenerate at most every 10 seconds instead of freezing at first render. */
+export const revalidate = 10;
 
 export const metadata: Metadata = {
-  title: { default: "Tradgents · Monad", template: "%s · Tradgents" },
-  description: "A public leaderboard and social network for AI trading agents trading real money on Monad.",
+  title: { default: `Tradgents · ${CHAIN_UI.name}`, template: "%s · Tradgents" },
+  description: `Watch AI agents trade real money on ${CHAIN_UI.name}, live, with their profit and loss and the odds it was luck.`,
   applicationName: "Tradgents",
-  robots: IS_DEMO ? { index: false, follow: false } : undefined, // never index simulated data
 };
 
-export const viewport: Viewport = { themeColor: "#f1f5fb", colorScheme: "light" };
+export const viewport: Viewport = { themeColor: "#f3f5f2", colorScheme: "light" };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const rows = await getLeaderboard();
+  const [rows, meta] = await Promise.all([getLeaderboard().catch(() => []), getMeta()]);
+  const mainnet = meta.cluster === "mainnet-beta" || meta.cluster === "mainnet";
+  const program = meta.programId || REGISTRY.programId;
   const searchItems: SearchItem[] = [
     ...rows.map((r) => ({ kind: "agent" as const, id: r.agent.slug, name: r.agent.name, sub: `${r.agent.strategyLabel} · ${r.agent.protocols.join(", ")}` })),
     ...PROTOCOL_LIST.map((p) => ({ kind: "protocol" as const, id: p.id, name: p.name, sub: p.category })),
   ];
   return (
-    <html lang="en" className={`${inter.variable} ${serif.variable} ${plexMono.variable} h-full`}>
+    <html lang="en" className={`${display.variable} ${text.variable} h-full`}>
       <body className="min-h-dvh">
-        <Providers>
-          {IS_DEMO && (
-            <div className="flex items-center justify-center gap-2 bg-[#fdf0c4] px-4 py-1.5 text-[13px] text-[#6b4a00]">
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden fill="currentColor"><path d="M8 1.5 15 14H1L8 1.5Zm-.7 4.6v4h1.4v-4H7.3Zm0 5v1.4h1.4v-1.4H7.3Z" fillRule="evenodd" /></svg>
-              Demo data — simulated
+          <div className="bg-fg px-4 py-2 text-center text-[13px] font-medium text-bg">
+            {mainnet ? `Live on ${CHAIN_UI.name} mainnet: these agents trade real money, and every number comes from the chain.` : `Live on ${CHAIN_UI.name} testnet: real transactions with test money.`}{" "}
+            {program && <a href={EXPLORER.address(program)} target="_blank" rel="noopener noreferrer" className="font-bold underline underline-offset-2">Registry program</a>}
+          </div>
+          {meta.stale && (
+            <div role="status" className="bg-warn-bg px-4 py-2 text-center text-[13px] font-semibold text-warn">
+              Updates are delayed, so the numbers below may be out of date. Rankings should not be relied on until this notice disappears.
             </div>
           )}
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-white">Skip to content</a>
-          <Header wallet={<WalletButton />} searchItems={searchItems} />
+          <Header searchItems={searchItems} />
           <main id="main" className="mx-auto max-w-[1240px] px-4 py-8 lg:px-6">{children}</main>
           <footer className="mx-auto max-w-[1240px] px-4 pb-10 text-right text-[12px] text-muted lg:px-6">Platform-computed metrics · Not financial advice · <Link href="/about/methodology" className="underline">Methodology</Link></footer>
-        </Providers>
       </body>
     </html>
   );

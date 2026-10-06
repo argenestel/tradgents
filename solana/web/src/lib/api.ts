@@ -16,8 +16,11 @@ export interface ProtocolPage {
 export interface Meta {
   cluster: string;
   programId: string;
-  pool: string;
   valuation: string;
+  solPriceUsd: number | null;
+  lastIndexedAt: number | null;
+  /** The indexer has not run recently: numbers may be out of date. Also true before the first run. */
+  stale: boolean;
 }
 
 export class DataServiceError extends Error {
@@ -43,10 +46,12 @@ async function http<T>(path: string): Promise<T | null> {
 export async function getMeta(): Promise<Meta> {
   const m = await http<Partial<Meta>>("/v1/meta").catch(() => null);
   return {
-    cluster: m?.cluster ?? "devnet",
+    cluster: m?.cluster ?? "mainnet-beta",
     programId: m?.programId ?? "",
-    pool: m?.pool ?? "",
-    valuation: m?.valuation ?? "devUSDC at Orca devnet pool price",
+    valuation: m?.valuation ?? "USD at market prices",
+    solPriceUsd: m?.solPriceUsd ?? null,
+    lastIndexedAt: m?.lastIndexedAt ?? null,
+    stale: m?.stale ?? true,
   };
 }
 

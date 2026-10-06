@@ -44,6 +44,9 @@ export function loadPolicy(file: string, uid: number | undefined = process.getui
   const st = fs.statSync(file);
   if (uid !== undefined && st.uid !== uid) throw new Error(`Policy ${file} must be owned by the user running the signer`);
   if (st.mode & 0o022) throw new Error(`Policy ${file} is writable by group or others (mode ${(st.mode & 0o777).toString(8)}); chmod 600 it`);
+  const dir = fs.statSync(path.dirname(path.resolve(file)));
+  if (uid !== undefined && dir.uid !== uid) throw new Error(`The folder holding ${file} must be owned by the user running the signer`);
+  if (dir.mode & 0o022) throw new Error(`The folder holding ${file} is writable by group or others; someone could swap the policy file`);
   const p = policySchema.parse(JSON.parse(fs.readFileSync(file, 'utf8')));
   const key = fs.statSync(p.keypairPath);
   if (uid !== undefined && key.uid !== uid) throw new Error(`Key ${p.keypairPath} must be owned by the user running the signer`);

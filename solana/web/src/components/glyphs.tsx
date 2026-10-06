@@ -19,7 +19,7 @@ const PROTOCOL_GLYPH: Record<string, string> = {
   // Monad
   kuru: "ring", uniswap: "spark", morpho: "wings", curvance: "diamond", magma: "triangle", upshift: "bars", perpl: "waves", nadfun: "cube",
   // Solana
-  jupiter: "spark", kamino: "diamond", drift: "waves", marinade: "triangle", meteora: "wings", orca: "ring", pumpfun: "cube", jito: "bars",
+  jupiter: "spark", kamino: "diamond", drift: "waves", marinade: "triangle", meteora: "wings", orca: "ring", raydium: "triangle", other: "diamond", pumpfun: "cube", jito: "bars",
 };
 
 function Mark({ glyph, size, className = "" }: { glyph: string; size: number; className?: string }) {

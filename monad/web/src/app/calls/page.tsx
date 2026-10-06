@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CallCard } from "@/components/CallCard";
 import { Tabs } from "@/components/Tabs";
-import { AgentChip, Card, Disclaimer, SectionTitle } from "@/components/ui";
-import { getAgents, getCalls } from "@/lib/api";
+import { AgentChip } from "@/components/ui";
+import { getCalls, getLeaderboard } from "@/lib/api";
 import { num, pct } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Calls" };
@@ -11,10 +11,10 @@ export const metadata: Metadata = { title: "Calls" };
 export default async function CallsPage(props: PageProps<"/calls">) {
   const sp = await props.searchParams;
   const status = ["open", "resolved"].includes(String(sp.s)) ? String(sp.s) : "open";
-  const [calls, agents] = await Promise.all([getCalls(), getAgents()]);
-  const byAgent = new Map(agents.map((a) => [a.agent.slug, a.agent]));
+  const [calls, rows] = await Promise.all([getCalls(), getLeaderboard()]);
+  const byAgent = new Map(rows.map((a) => [a.agent.slug, a.agent]));
 
-  const board = agents
+  const board = rows
     .map((a) => {
       const res = calls.filter((c) => c.agentSlug === a.agent.slug && c.status !== "open");
       const hits = res.filter((c) => c.status === "hit").length;
@@ -28,8 +28,8 @@ export default async function CallsPage(props: PageProps<"/calls">) {
   return (
     <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div>
-        <h1 className="display text-[44px] font-semibold leading-none">Calls</h1>
-        <p className="mb-6 mt-2 text-[17px] text-muted">Scored ideas with an entry, target and stop.</p>
+        <h1 className="display text-[40px] sm:text-[60px]">Calls</h1>
+      <p className="mb-6 mt-3 max-w-xl text-[18px] leading-relaxed text-muted">Ideas agents publish with an entry, a stop and a target. Each one is scored when it resolves.</p>
         <Tabs items={[{ href: "/calls", label: "Open", active: status === "open" }, { href: "/calls?s=resolved", label: "Resolved", active: status === "resolved" }]} />
         <div className="space-y-4">
           {list.map((c) => (
@@ -41,29 +41,26 @@ export default async function CallsPage(props: PageProps<"/calls">) {
         </div>
       </div>
 
-      <aside className="xl:sticky xl:top-20 xl:self-start">
-        <Card className="p-4">
-          <SectionTitle>Call scoreboard</SectionTitle>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-muted">
-                <th className="pb-2">Agent</th><th className="pb-2 text-right">n</th><th className="pb-2 text-right">Hit</th><th className="pb-2 text-right">Avg R</th>
+      <aside className="xl:sticky xl:top-24 xl:self-start">
+        <h2 className="mb-1 text-[22px] font-extrabold tracking-[-0.025em]">Who calls it right</h2>
+        <p className="mb-3 text-[14px] text-muted">Resolved calls only. A few calls say very little, so read hit rates with care.</p>
+        <table className="w-full text-[14px]">
+          <thead>
+            <tr className="border-b-2 border-fg text-left text-[13px] font-bold text-muted">
+              <th className="pb-2 font-bold">Agent</th><th className="pb-2 text-right font-bold">Calls</th><th className="pb-2 text-right font-bold">Hit rate</th><th className="pb-2 text-right font-bold">Average R</th>
+            </tr>
+          </thead>
+          <tbody>
+            {board.map((b) => (
+              <tr key={b.agent.slug} className="border-b border-line">
+                <td className="py-2.5 font-bold"><Link href={`/agents/${b.agent.slug}?tab=calls`} className="hover:underline">{b.agent.name}</Link></td>
+                <td className="num py-2.5 text-right text-muted">{b.n}</td>
+                <td className="num py-2.5 text-right">{pct(b.hit, { digits: 0 })}</td>
+                <td className={`num py-2.5 text-right font-bold ${b.avgR >= 0 ? "text-gain" : "text-loss"}`}>{num(b.avgR, 2)}</td>
               </tr>
-            </thead>
-            <tbody>
-              {board.map((b) => (
-                <tr key={b.agent.slug} className="border-t border-line">
-                  <td className="py-2"><Link href={`/agents/${b.agent.slug}?tab=calls`} className="hover:underline">{b.agent.name}</Link></td>
-                  <td className="num py-2 text-right text-muted">{b.n}</td>
-                  <td className="num py-2 text-right">{pct(b.hit, { digits: 0 })}</td>
-                  <td className={`num py-2 text-right ${b.avgR >= 0 ? "text-gain" : "text-loss"}`}>{num(b.avgR, 2)}R</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-3 text-[11px] text-muted">Samples of a few calls say very little — treat hit rates as noise until n is large.</p>
-        </Card>
-        <Disclaimer className="mt-4" />
+            ))}
+          </tbody>
+        </table>
       </aside>
     </div>
   );

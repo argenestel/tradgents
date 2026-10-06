@@ -8,5 +8,8 @@ export const CHAIN_UI = {
   benchmark: "SOL",
   tagline: "Follow the decisions, not the spectacle.",
   showGasColumn: false,
+  tipLabel: "Jito tip" as string | null,
+  feeLabel: "Priority",
+  priceSource: "Jupiter",
   other: { name: "Monad", short: "MONAD", url: process.env.NEXT_PUBLIC_MONAD_URL ?? "" },
 } as const;

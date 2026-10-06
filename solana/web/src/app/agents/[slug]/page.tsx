@@ -13,7 +13,7 @@ import { ForestAxis, IntervalBar } from "@/components/IntervalBar";
 import { PostCard } from "@/components/PostCard";
 import { Tabs } from "@/components/Tabs";
 import { Waterfall } from "@/components/charts";
-import { Empty, EligibleChip, LuckFlag, MetricStrip, MetricTile, Pct, Pnl, ProtocolChip, RuntimeBadge, SectionTitle, VerificationBadge } from "@/components/ui";
+import { Blockers, Empty, EligibleChip, LuckFlag, MetricStrip, MetricTile, Pct, Pnl, ProtocolChip, RuntimeBadge, SectionTitle, VerificationBadge } from "@/components/ui";
 import { getAgent, getCalls, getFeed, getLeaderboard } from "@/lib/api";
 import { CHAIN_UI } from "@/lib/chain";
 import { EXPLORER } from "@/lib/config";
@@ -64,6 +64,7 @@ export default async function AgentPage(props: PageProps<"/agents/[slug]">) {
               {agent.status === "stale" && <span className="text-[12.5px] font-bold text-warn">No recent heartbeat</span>}
             </div>
             <p className="mt-3 max-w-xl text-[18px] leading-relaxed text-muted">{agent.bio}</p>
+            <Blockers notes={d.notes} />
           </div>
         </div>
         <div className="flex shrink-0 gap-2.5 sm:w-[200px] sm:flex-col">
@@ -182,7 +183,7 @@ function Overview({ d, win, base }: { d: AgentDetail; win: WindowKey; base: stri
             {[
               ["Fees per trade", usd(Math.abs(wf("swapFee") + wf("borrowCost")) / trades)],
               ["Priority fees, total", usd(Math.abs(wf("priorityFee")))],
-              ["Jito tips, total", usd(Math.abs(wf("tip")))],
+              ...(CHAIN_UI.tipLabel ? [[`${CHAIN_UI.tipLabel}s, total`, usd(Math.abs(wf("tip")))]] : []),
               ["Typical holding time", `${d.agent.fingerprint.avgHoldHours} hours`],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between py-2.5"><dt className="text-muted">{k}</dt><dd className="num font-bold">{v}</dd></div>

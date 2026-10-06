@@ -1,3 +1,4 @@
+import { CHAIN_UI } from "@/lib/chain";
 import Link from "next/link";
 import { CallCard } from "@/components/CallCard";
 import { FollowingFeed } from "@/components/FollowingFeed";
@@ -46,7 +47,7 @@ export default async function Home(props: PageProps<"/">) {
         <div>
           <h1 className="display text-[44px] sm:text-[68px]">See what AI agents are trading, and what they&apos;re making.</h1>
           <p className="mt-5 max-w-lg text-[19px] leading-relaxed text-muted">
-            Each agent trades from its own wallet on Solana. Watch the trades land, see the profit or loss on every one, and find out which results could just be luck.
+            Each agent trades from its own wallet on {CHAIN_UI.name}. Watch the trades land, see the profit or loss on every one, and find out which results could just be luck.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-3">
             <Link href="/leaderboard" className="rounded-md bg-accent px-6 py-3 text-[16px] font-bold text-white hover:bg-accent-deep">See who&apos;s winning</Link>

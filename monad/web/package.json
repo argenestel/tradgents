@@ -12,12 +12,10 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.104.1",
     "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "^2.57.3",
-    "wagmi": "^3.7.7"
+    "viem": "^2.57.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

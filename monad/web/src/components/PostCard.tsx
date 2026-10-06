@@ -1,73 +1,76 @@
-import { timeAgo } from "@/lib/format";
-import type { PostView } from "@/lib/types";
-import { CallCard } from "./CallCard";
-import { InteractionCard } from "./InteractionCard";
-import { ProtocolLogo } from "./glyphs";
-import { PROTOCOLS } from "@/lib/protocols";
-import { ReactionBar } from "./ReactionBar";
-import { Avatar, Card, EligibleChip, LuckFlag, RuntimeBadge, VerificationBadge } from "./ui";
 import Link from "next/link";
-import { num } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
+import { interactionTitle } from "@/lib/protocols";
+import { PROTOCOLS } from "@/lib/protocols";
+import type { Metrics, PostView } from "@/lib/types";
+import { CallCard } from "./CallCard";
+import { AgentGlyph } from "./glyphs";
+import { InteractionCard } from "./InteractionCard";
+import { Pnl, SharpeLine } from "./ui";
 
-export function PostCard({ post, hideAgent = false, metrics }: { post: PostView; hideAgent?: boolean; metrics?: import("@/lib/types").Metrics }) {
+const short = (ts: number) => timeAgo(ts).replace(" ago", "");
+
+/** One entry in the tape. Trades expand in place; claims and calls stay open because that's where credibility matters. */
+export function PostCard({ post, hideAgent = false, metrics }: { post: PostView; hideAgent?: boolean; metrics?: Metrics }) {
   const a = post.agent;
-  const m = metrics;
+  const who = hideAgent ? null : (
+    <Link href={`/agents/${a.slug}`} className="font-extrabold tracking-[-0.01em] hover:underline">{a.name}</Link>
+  );
+
   return (
-    <Card className="p-5">
-      {!hideAgent && (
-        <header className="mb-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          <div className="flex min-w-0 items-center gap-3">
-            <Avatar name={a.name} size={44} />
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Link href={`/agents/${a.slug}`} className="text-[16px] font-semibold hover:underline">{a.name}</Link>
-                <RuntimeBadge runtime={a.runtime} />
-                <VerificationBadge level={a.verification} />
-                {post.interaction && (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">
-                    <ProtocolLogo id={post.interaction.protocol} size={14} />{PROTOCOLS[post.interaction.protocol].name}
-                  </span>
-                )}
-              </div>
-              {m && (
-                <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted">
-                  <span>Sharpe <b className="num text-fg">{num(m.sharpe, 1)}</b></span>
-                  <span className="num">95% [{num(m.sharpeLo, 1)}, {num(m.sharpeHi, 1)}]</span>
-                  <span aria-hidden>·</span>
-                  <span className="num">{m.days}d · {m.trades} trades</span>
-                  <EligibleChip eligible={m.eligible} />
-                  <LuckFlag m={m} />
+    <article className="grid grid-cols-[3rem_1fr] gap-x-3 border-b border-line py-4 sm:grid-cols-[3.5rem_1fr] sm:gap-x-4">
+      <time suppressHydrationWarning className="num pt-1 text-[13px] text-muted" dateTime={new Date(post.ts).toISOString()}>{short(post.ts)}</time>
+      <div className="min-w-0">
+        {post.type === "trade" && post.interaction && (
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-start gap-3 rounded-md [&::-webkit-details-marker]:hidden">
+              {!hideAgent && <AgentGlyph name={a.name} size={34} />}
+              <div className="min-w-0 flex-1">
+                <div className="text-[16px] leading-snug">
+                  {who} {who && <span className="text-muted">{interactionTitle(post.interaction).replace(/^./, (c) => c.toLowerCase())}</span>}
+                  {!who && <span className="font-bold">{interactionTitle(post.interaction)}</span>}
                 </div>
-              )}
+                <div className="text-[13.5px] text-muted">on {PROTOCOLS[post.interaction.protocol].name}</div>
+              </div>
+              <div className="flex items-center gap-2 text-[17px]">
+                <Pnl value={post.interaction.pnlUsd} bold />
+                <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden className="text-muted transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m2.5 4.5 3.5 3.5 3.5-3.5" /></svg>
+              </div>
+            </summary>
+            <div className="mt-3 sm:pl-[46px]">
+              <InteractionCard i={post.interaction} />
+            </div>
+          </details>
+        )}
+
+        {post.type === "thesis" && post.text && (
+          <div className="flex items-start gap-3">
+            {!hideAgent && <AgentGlyph name={a.name} size={34} />}
+            <div className="min-w-0 flex-1">
+              <div className="text-[16px] leading-snug">{who} {who && <span className="text-muted">made a claim</span>}</div>
+              {/* Agent text is untrusted: rendered as inert plain text only. */}
+              <blockquote className="mt-2 border-l-[3px] border-luck pl-4 text-[20px] italic leading-snug">“{post.text}”</blockquote>
+              <p className="mt-1.5 text-[13px] font-bold text-warn">Written by the agent. Not verified by Tradgents.</p>
+              {metrics && <div className="mt-2"><SharpeLine m={metrics} /></div>}
             </div>
           </div>
-          <span className="text-[12.5px] text-muted">{timeAgo(post.ts)}</span>
-        </header>
-      )}
+        )}
 
-      {post.type === "trade" && post.interaction && <InteractionCard i={post.interaction} />}
-      {post.type === "call" && post.call && <CallCard call={post.call} />}
-
-      {post.type === "thesis" && post.text && (
-        <div className="rounded-xl border border-[#f0d58b] bg-warn-bg px-4 py-3.5">
-          <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-warn">
-            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden fill="currentColor"><path d="M8 1.5 15 14H1L8 1.5Zm-.7 4.6v4h1.4v-4H7.3Zm0 5v1.4h1.4v-1.4H7.3Z" fillRule="evenodd" /></svg>
-            Agent-authored claim · not verified
+        {post.type === "call" && post.call && (
+          <div className="flex items-start gap-3">
+            {!hideAgent && <AgentGlyph name={a.name} size={34} />}
+            <div className="min-w-0 flex-1">
+              <div className="text-[16px] leading-snug">{who} {who && <span className="text-muted">published a call</span>}</div>
+              <CallCard call={post.call} compact />
+              {metrics && <div className="mt-2"><SharpeLine m={metrics} /></div>}
+            </div>
           </div>
-          {/* Agent text is untrusted: rendered as inert plain text only. */}
-          <p className="display mt-2 whitespace-pre-wrap text-[19px] italic leading-snug">“{post.text}”</p>
-        </div>
-      )}
+        )}
 
-      {post.type === "milestone" && (
-        <p className="rounded-xl bg-surface-2 px-4 py-3 text-[14px] text-muted">
-          Reached <b className="text-fg">{post.text}</b> with an active wallet.
-        </p>
-      )}
-
-      <div className="mt-4">
-        <ReactionBar initial={post.reactions} replies={post.replies} />
+        {post.type === "milestone" && (
+          <p className="text-[15px] text-muted">{who} {who && "reached"} <b className="text-fg">{post.text}</b>.</p>
+        )}
       </div>
-    </Card>
+    </article>
   );
 }

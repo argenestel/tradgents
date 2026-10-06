@@ -19,6 +19,8 @@ export const PROTOCOLS: Record<ProtocolId, ProtocolMeta> = {
   marinade: { id: "marinade", name: "Marinade", category: "Liquid staking", color: "#5eead4", blurb: "Liquid staking (mSOL). Profit is staking yield accruing into the token's exchange rate; risks are depeg and validator performance." },
   meteora: { id: "meteora", name: "Meteora", category: "Concentrated LP", color: "#f472b6", blurb: "Dynamic/concentrated liquidity pools. Profit is trading fees minus impermanent loss; out-of-range positions earn nothing." },
   orca: { id: "orca", name: "Orca", category: "Spot swaps / concentrated LP", color: "#38bdf8", blurb: "Concentrated-liquidity AMM. Spot swaps realize price gain or loss minus the pool fee; LP positions trade fees against impermanent loss." },
+  raydium: { id: "raydium", name: "Raydium", category: "Spot / AMM", color: "#6d5efc", blurb: "AMM and concentrated-liquidity pools. Spot swaps realize price gain or loss; fees and slippage sit inside the execution price." },
+  other: { id: "other", name: "Other venues", category: "Spot", color: "#64748b", blurb: "Swaps on venues without their own page yet. Same accounting: price gain or loss against what the asset cost." },
   pumpfun: { id: "pumpfun", name: "Pump.fun", category: "Launchpad / memecoins", color: "#facc15", blurb: "Bonding-curve token launches. Extremely high variance and survivorship bias — treat any short track record as noise." },
   jito: { id: "jito", name: "Jito", category: "Liquid staking", color: "#a3e635", blurb: "Liquid staking (JitoSOL) with MEV-boosted yield. Profit is staking + MEV rewards; same depeg/validator risks as other LSTs." },
 };
@@ -53,12 +55,6 @@ export interface InteractionMeta {
 const sideWord = (i: Interaction) => (i.meta.side === "short" ? "short" : "long");
 
 export const INTERACTIONS: Record<string, InteractionMeta> = {
-  "jupiter.swap": {
-    title: (i) => `Swapped ${i.meta.pair ?? ""}`,
-    how: "Gain or loss from the price difference between buying and selling, minus swap fees and priority costs.",
-    risks: ["Slippage on thin pools", "Scam / unverified tokens", "Sandwich-style MEV"],
-    closes: true,
-  },
   "jupiter.dca_fill": {
     title: (i) => `DCA fill ${i.meta.pair ?? ""}`,
     how: "Averaging into a position over time; PnL depends on the path of prices vs the average entry.",
@@ -81,12 +77,6 @@ export const INTERACTIONS: Record<string, InteractionMeta> = {
     title: (i) => `Closed LP ${i.meta.pair ?? ""}`,
     how: "Earn trading fees while price stays in range; lose to impermanent loss when price moves away from the deposit ratio.",
     risks: ["Impermanent loss", "Range exits earning nothing", "Pool/token risk"],
-    closes: true,
-  },
-  "orca.swap": {
-    title: (i) => `Swapped ${i.meta.pair ?? ""}`,
-    how: "Spot swap in an Orca pool. A sell realizes gain or loss against what the SOL cost; a buy opens a position and only costs fees.",
-    risks: ["Thin devnet liquidity moves the price", "Pool fee on every swap", "Price moves against the position"],
     closes: true,
   },
   "orca.lp_remove": {
@@ -138,6 +128,14 @@ export const INTERACTIONS: Record<string, InteractionMeta> = {
     closes: true,
   },
 };
+
+const SPOT_SWAP: InteractionMeta = {
+  title: (i) => `Swapped ${i.meta.pair ?? ""}`,
+  how: "Spot swap. Selling realizes gain or loss against what the asset cost; buying opens a position and costs only fees and slippage.",
+  risks: ["Slippage and price impact in thin pools", "Tokens with no reliable market price can't be scored", "Price moves against the position"],
+  closes: true,
+};
+for (const id of ["jupiter", "orca", "raydium", "meteora", "pumpfun", "other"]) INTERACTIONS[`${id}.swap`] = SPOT_SWAP;
 
 export function interactionMeta(protocol: ProtocolId, kind: InteractionKind): InteractionMeta | undefined {
   return INTERACTIONS[`${protocol}.${kind}`];

@@ -10,7 +10,7 @@ import type { LeaderboardRow, Metrics, ProtocolId, RuntimeId, Tier, WindowKey } 
 import { Info } from "./Info";
 import { ForestAxis, IntervalBar } from "./IntervalBar";
 import { LiveRefresh } from "./LiveRefresh";
-import { AgentChip, Empty, LuckFlag, Pct } from "./ui";
+import { AgentChip, Blockers, Empty, LuckFlag, Pct } from "./ui";
 
 const WINDOWS: { key: WindowKey; label: string }[] = [
   { key: "7d", label: "7 days" },
@@ -222,7 +222,7 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
               const m = r.metrics[win];
               return (
                 <li key={r.agent.slug} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3.5">
-                  <AgentChip agent={r.agent} />
+                  <div><AgentChip agent={r.agent} /><Blockers notes={r.notes} /></div>
                   <div className="num flex flex-wrap items-center gap-x-6 gap-y-1 text-[14px]">
                     {m.trades === 0 ? <span className="text-muted">No trades yet</span> : (
                       <>

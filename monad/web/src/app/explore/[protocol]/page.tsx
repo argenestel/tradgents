@@ -2,18 +2,22 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Waterfall } from "@/components/charts";
-import { Card, Disclaimer, Pnl, SectionTitle } from "@/components/ui";
+import { ProtocolLogo } from "@/components/glyphs";
+import { Pnl, SectionTitle } from "@/components/ui";
 import { getProtocolPage } from "@/lib/api";
 import { pct, usd } from "@/lib/format";
 import { INTERACTIONS, PROTOCOLS } from "@/lib/protocols";
 import type { ProtocolId } from "@/lib/types";
+
+/** Live data: regenerate at most every 10 seconds instead of freezing at first render. */
+export const revalidate = 10;
 
 export async function generateMetadata(props: PageProps<"/explore/[protocol]">): Promise<Metadata> {
   const { protocol } = await props.params;
   return { title: PROTOCOLS[protocol as ProtocolId]?.name ?? "Protocol" };
 }
 
-const human = (k: string) => k.replace(/_/g, " ");
+const human = (k: string) => k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 export default async function ProtocolPage(props: PageProps<"/explore/[protocol]">) {
   const { protocol } = await props.params;
@@ -23,76 +27,57 @@ export default async function ProtocolPage(props: PageProps<"/explore/[protocol]
   const kinds = Object.entries(INTERACTIONS).filter(([k]) => k.startsWith(`${p.id}.`));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link href="/explore" className="text-xs text-muted underline">← All protocols</Link>
-        <div className="mt-2 flex items-center gap-3">
-          <span aria-hidden className="size-3 rounded-sm" style={{ background: p.color }} />
-          <h1 className="display text-[44px] font-semibold leading-none">{p.name}</h1>
-          <span className="rounded-[3px] border border-line px-2 py-0.5 text-[11px] text-muted">{p.category}</span>
+    <div>
+      <Link href="/explore" className="text-[14px] font-bold text-accent hover:underline">All protocols</Link>
+      <div className="mt-4 flex items-center gap-4">
+        <ProtocolLogo id={p.id} size={56} />
+        <div>
+          <h1 className="display text-[40px] sm:text-[60px]">{p.name}</h1>
+          <div className="mt-1 text-[15px] font-semibold text-muted">{p.category}</div>
         </div>
-        <p className="mt-2 max-w-3xl text-[15px] text-muted">{p.blurb}</p>
-        {p.confidence !== "high" && (
-          <p className="mt-2 max-w-3xl rounded-[4px] border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-            ⚠ The on-chain event surface for {p.name} is still being confirmed. Until then, profit attribution here may be equity-level rather than per fill.
-          </p>
-        )}
       </div>
+      <p className="mt-5 max-w-2xl text-[18px] leading-relaxed text-muted">{p.blurb}</p>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="p-5">
-          <SectionTitle>How value is made — and lost</SectionTitle>
-          <ul className="space-y-4">
+      <div className="mt-12 grid gap-12 lg:grid-cols-2">
+        <section>
+          <SectionTitle>How agents make and lose money here</SectionTitle>
+          <ul className="border-t-2 border-fg">
             {kinds.map(([k, m]) => (
-              <li key={k}>
-                <h3 className="text-sm font-medium capitalize">{human(k.split(".")[1])}</h3>
-                <p className="mt-1 text-sm text-muted">{m.how}</p>
-                <p className="mt-1.5 text-xs text-muted">
-                  <span className="text-warn">Risks:</span> {m.risks.join(" · ")}
-                </p>
+              <li key={k} className="border-b border-line py-4">
+                <h3 className="text-[17px] font-extrabold tracking-[-0.015em]">{human(k.split(".")[1])}</h3>
+                <p className="mt-1 text-[15.5px] leading-snug text-muted">{m.how}</p>
+                <p className="mt-2 text-[14px] leading-snug"><b className="text-warn">Watch for:</b> <span className="text-muted">{m.risks.join(", ")}.</span></p>
               </li>
             ))}
           </ul>
-          <p className="mt-4 text-[11px] text-muted">General descriptions, not advice. Verified protocol details live in the PROTOCOLS catalog.</p>
-        </Card>
+        </section>
 
-        <Card className="p-5">
-          <SectionTitle aside="all agents, net of costs">Aggregate profit decomposition</SectionTitle>
+        <section>
+          <SectionTitle aside={`${page.totalTrades} trades by ${page.agents.length} agents`}>Combined profit breakdown</SectionTitle>
           <Waterfall items={page.waterfall} />
-          <div className="num mt-4 flex gap-6 border-t border-line pt-3 text-xs text-muted">
-            <span>{page.totalTrades} trades</span>
-            <span>{page.agents.length} agents</span>
-          </div>
-        </Card>
+        </section>
       </div>
 
-      <Card className="overflow-x-auto">
-        <div className="px-4 pt-4"><SectionTitle>Agents ranked by {p.name} PnL only</SectionTitle></div>
-        <table className="w-full min-w-[560px] text-sm">
-          <thead>
-            <tr className="border-y border-line text-left text-[11px] uppercase tracking-wider text-muted">
-              <th className="px-4 py-2.5">Agent</th>
-              <th className="px-4 py-2.5 text-right">Trades</th>
-              <th className="px-4 py-2.5 text-right">Realized PnL</th>
-              <th className="px-4 py-2.5 text-right">Win rate</th>
-              <th className="px-4 py-2.5 text-right">Fees &amp; tips</th>
-            </tr>
-          </thead>
-          <tbody>
-            {page.agents.map((a) => (
-              <tr key={a.slug} className="border-b border-line last:border-0">
-                <td className="px-4 py-3"><Link href={`/agents/${a.slug}`} className="font-medium hover:underline">{a.name}</Link></td>
-                <td className="num px-4 py-3 text-right">{a.stat.trades}</td>
-                <td className="px-4 py-3 text-right"><Pnl value={a.stat.pnlUsd} /></td>
-                <td className="num px-4 py-3 text-right">{pct(a.stat.winRate, { digits: 0 })}</td>
-                <td className="num px-4 py-3 text-right text-muted">{usd(a.stat.costUsd)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="px-4 py-3 text-[11px] text-muted">Per-protocol rankings use realized PnL here; the leaderboard&apos;s risk-adjusted per-protocol Sharpe needs the real backend.</p>
-      </Card>
-      <Disclaimer className="max-w-3xl" />
+      <section className="mt-14">
+        <SectionTitle>Agents ranked by results on {p.name}</SectionTitle>
+        <div role="table" className="border-t-2 border-fg">
+          <div role="row" className="hidden grid-cols-[1.5fr_5rem_8rem_6rem_7rem] gap-4 border-b border-line py-2.5 text-[13px] font-bold text-muted sm:grid">
+            <div role="columnheader">Agent</div><div role="columnheader" className="text-right">Trades</div><div role="columnheader" className="text-right">Result</div><div role="columnheader" className="text-right">Won</div><div role="columnheader" className="text-right">Costs</div>
+          </div>
+          {page.agents.map((a) => (
+            <div key={a.slug} role="row" className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 border-b border-line py-3.5 sm:grid-cols-[1.5fr_5rem_8rem_6rem_7rem] sm:items-center sm:gap-4">
+              <div role="cell"><Link href={`/agents/${a.slug}`} className="text-[16px] font-extrabold hover:underline">{a.name}</Link></div>
+              <div role="cell" className="num text-right text-[14px] text-muted sm:order-none">{a.stat.trades} trades</div>
+              <div role="cell" className="text-[15px] sm:text-right"><Pnl value={a.stat.pnlUsd} bold /></div>
+              <div role="cell" className="num text-right text-[14px] text-muted">{pct(a.stat.winRate, { digits: 0 })} won</div>
+              <div role="cell" className="num text-right text-[14px] text-muted">{usd(a.stat.costUsd)}</div>
+            </div>
+          ))}
+          {page.agents.length > 0 && (
+            <div className="flex justify-between py-3.5 text-[15px]"><span className="font-extrabold">Everyone combined</span><span><Pnl value={page.totalPnl} bold /></span></div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

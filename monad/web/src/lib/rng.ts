@@ -48,8 +48,9 @@ export function pickWeighted<T>(r: Rng, items: [T, number][]): T {
   return items[items.length - 1][0];
 }
 
-export function hexString(r: Rng, len: number): string {
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+export function fakeBase58(r: Rng, len: number): string {
   let s = "";
-  for (let i = 0; i < len; i++) s += "0123456789abcdef"[Math.floor(r() * 16)];
+  for (let i = 0; i < len; i++) s += B58[Math.floor(r() * B58.length)];
   return s;
 }

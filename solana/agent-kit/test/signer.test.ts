@@ -156,11 +156,25 @@ describe('spend ledger', () => {
     const results = await Promise.all(Array.from({ length: 10 }, (_, i) => l.reserve(`id${i}`, 10, 35)));
     expect(results.filter(r => r.ok)).toHaveLength(3);
   });
+  it('refuses to trade, rather than forget a spend, when the ledger is damaged', async () => {
+    const l = new SpendLedger(path.join(dir, 'l4'), () => clock); await l.reserve('a', 5, 10);
+    fs.appendFileSync(path.join(dir, 'l4', 'spend.jsonl'), '{"id":"b","ts":1,"mic');
+    expect(() => l.spentLast24h()).toThrow(/damaged at line 2/); await expect(l.reserve('c', 1, 10)).rejects.toThrow(/damaged/);
+  });
+  it('does not let rounding creep past the daily limit', async () => {
+    const l = new SpendLedger(path.join(dir, 'l5'), () => clock); let ok = 0;
+    for (let i = 0; i < 200; i++) if ((await l.reserve(`i${i}`, 0.1, 10)).ok) ok++;
+    expect(ok).toBe(100); expect(l.spentLast24h()).toBeCloseTo(10, 6);
+  });
   it('survives restart', async () => { await new SpendLedger(path.join(dir, 'l3'), () => clock).reserve('x', 7, 10); expect(new SpendLedger(path.join(dir, 'l3'), () => clock).spentLast24h()).toBe(7); });
 });
 
 describe('policy file', () => {
   const base = () => ({ network: 'mainnet-beta', rpcUrl: 'http://rpc', keypairPath: path.join(dir, 'k.json'), stateDir: dir, socketPath: path.join(dir, 's'), apiUrl: 'http://api', maxTradeUsd: 5, maxDailyUsd: 10 });
+  it('refuses a policy in a folder others can write to', () => {
+    fs.writeFileSync(path.join(dir, 'k.json'), '[]', { mode: 0o600 }); const f = path.join(dir, 'p.json'); fs.writeFileSync(f, JSON.stringify(base()), { mode: 0o600 });
+    fs.chmodSync(dir, 0o777); expect(() => loadPolicy(f)).toThrow(/folder/); fs.chmodSync(dir, 0o700);
+  });
   it('loads a private policy and refuses ones others can edit, or keys others can read', () => {
     fs.writeFileSync(path.join(dir, 'k.json'), '[]', { mode: 0o600 }); const f = path.join(dir, 'p.json'); fs.writeFileSync(f, JSON.stringify(base()), { mode: 0o600 });
     expect(loadPolicy(f).maxTradeUsd).toBe(5);

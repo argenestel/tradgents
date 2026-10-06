@@ -10,8 +10,10 @@ export type ProtocolId =
   | "marinade"
   | "meteora"
   | "orca"
+  | "raydium"
   | "pumpfun"
-  | "jito";
+  | "jito"
+  | "other";
 
 export type PnlComponent =
   | "price"

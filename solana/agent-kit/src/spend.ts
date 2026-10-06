@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export interface SpendEntry { id: string; ts: number; usd: number; status: 'reserved' | 'sent' | 'failed'; signature?: string; note?: string }
+/** Amounts are integer micro-dollars (rounded up), so the daily total never drifts from float error. */
+export interface SpendEntry { id: string; ts: number; micro: number; status: 'reserved' | 'sent' | 'failed'; signature?: string; note?: string }
 const DAY = 86_400_000;
 
 /**
@@ -17,18 +18,22 @@ export class SpendLedger {
     if (!fs.existsSync(this.file)) fs.writeFileSync(this.file, '', { mode: 0o600 });
   }
   private read(): SpendEntry[] {
-    return fs.readFileSync(this.file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as SpendEntry);
+    // A line we cannot read could be a spend we would then forget, so refuse to trade rather than skip it.
+    return fs.readFileSync(this.file, 'utf8').split('\n').filter(Boolean).map((l, i) => {
+      try { const e = JSON.parse(l) as SpendEntry; if (!Number.isSafeInteger(e.micro) || !e.id || !e.status) throw new Error('bad entry'); return e; }
+      catch { throw new Error(`The spend ledger ${this.file} is damaged at line ${i + 1}. Trading is refused until the owner inspects and repairs it.`); }
+    });
   }
   private append(e: SpendEntry) { fs.appendFileSync(this.file, JSON.stringify(e) + '\n'); fs.fsyncSync(fs.openSync(this.file, 'r')); }
   /** Latest state per id, so a later `failed` line cancels an earlier `reserved` one. */
   private latest(): SpendEntry[] { const m = new Map<string, SpendEntry>(); for (const e of this.read()) m.set(e.id, { ...m.get(e.id), ...e }); return [...m.values()]; }
-  spentLast24h(): number { const since = this.now() - DAY; return this.latest().filter(e => e.status !== 'failed' && e.ts > since).reduce((s, e) => s + e.usd, 0); }
+  spentLast24h(): number { const since = this.now() - DAY; return this.latest().filter(e => e.status !== 'failed' && e.ts > since).reduce((s, e) => s + e.micro, 0) / 1e6; }
   /** Serialized so two concurrent intents cannot both pass the check. */
   reserve(id: string, usd: number, limit: number): Promise<{ ok: true } | { ok: false; spent: number }> {
     const run = this.chain.then(() => {
-      const spent = this.spentLast24h();
-      if (spent + usd > limit + 1e-9) return { ok: false as const, spent };
-      this.append({ id, ts: this.now(), usd, status: 'reserved' });
+      const micro = Math.ceil(usd * 1e6), spent = this.spentLast24h();
+      if (Math.round(spent * 1e6) + micro > Math.floor(limit * 1e6)) return { ok: false as const, spent };
+      this.append({ id, ts: this.now(), micro, status: 'reserved' });
       return { ok: true as const };
     });
     this.chain = run.catch(() => undefined);

@@ -1,3 +1,4 @@
+import { CHAIN_UI } from "@/lib/chain";
 import { EXPLORER } from "@/lib/config";
 import { num, shortAddr, timeAgo, usd } from "@/lib/format";
 import { PROTOCOLS, interactionTitle } from "@/lib/protocols";
@@ -42,7 +43,7 @@ export function InteractionCard({ i, showTime = false }: { i: Interaction; showT
         </div>
         <dl className="num text-[13px]">
           <dt className="mb-0.5 font-sans text-[13px] font-semibold text-muted">Costs</dt>
-          {[["Fees", fees], ["Priority", priority], ["Jito tip", tip]].map(([k, v]) => (
+          {[["Fees", fees], [CHAIN_UI.feeLabel, priority], ...(CHAIN_UI.tipLabel ? [[CHAIN_UI.tipLabel, tip]] : [])].map(([k, v]) => (
             <div key={k as string} className="flex justify-between gap-3"><dd className="font-sans text-muted">{k}</dd><dd>{usd(v as number)}</dd></div>
           ))}
         </dl>

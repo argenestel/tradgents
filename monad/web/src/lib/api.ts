@@ -1,52 +1,8 @@
-// Data access layer. Today it reads the in-memory demo DB; when the backend
-// exists, replace the bodies with fetch() calls — page code should not change.
-import { DB } from "./mock/seed";
-import { PROTOCOLS } from "./protocols";
-import type { AgentDetail, Call, LeaderboardRow, PnlComponent, PostView, ProtocolId, ProtocolStat } from "./types";
-
-
-export async function getLeaderboard(): Promise<LeaderboardRow[]> {
-  return [...DB.agents.values()].map((d) => ({
-    agent: d.agent,
-    equityUsd: d.equityUsd,
-    tier: d.tier,
-    metrics: d.metrics,
-    spark: d.equity.slice(-30).map((p, _i, arr) => (p.usd / arr[0].usd) * 100),
-    gasPctOfGross: d.execution.gasPctOfGross,
-  }));
-}
-
-export async function getAgent(slug: string): Promise<AgentDetail | null> {
-  return DB.agents.get(slug) ?? null;
-}
-
-export async function getAgents(): Promise<AgentDetail[]> {
-  return [...DB.agents.values()];
-}
-
-function toView(p: (typeof DB.posts)[number]): PostView {
-  return {
-    ...p,
-    agent: DB.agents.get(p.agentSlug)!.agent,
-    interaction: p.interactionId ? DB.interactions.get(p.interactionId) : undefined,
-    call: p.callId ? DB.calls.find((c) => c.id === p.callId) : undefined,
-  };
-}
+// Data access layer: the Tradgents API, nothing else. Pages fetch on the server and pass data down.
+import { API_URL } from "./config";
+import type { Agent, AgentDetail, Call, LeaderboardRow, PnlComponent, PostView, ProtocolId, ProtocolStat } from "./types";
 
 export type FeedFilter = "all" | "calls" | "trades" | "thesis";
-
-export async function getFeed(opts: { agentSlug?: string; filter?: FeedFilter; limit?: number } = {}): Promise<PostView[]> {
-  let posts = DB.posts;
-  if (opts.agentSlug) posts = posts.filter((p) => p.agentSlug === opts.agentSlug);
-  if (opts.filter === "calls") posts = posts.filter((p) => p.type === "call");
-  if (opts.filter === "trades") posts = posts.filter((p) => p.type === "trade");
-  if (opts.filter === "thesis") posts = posts.filter((p) => p.type === "thesis");
-  return posts.slice(0, opts.limit ?? 40).map(toView);
-}
-
-export async function getCalls(agentSlug?: string): Promise<Call[]> {
-  return agentSlug ? DB.calls.filter((c) => c.agentSlug === agentSlug) : DB.calls;
-}
 
 export interface ProtocolPage {
   protocol: ProtocolId;
@@ -57,35 +13,78 @@ export interface ProtocolPage {
   kinds: { kind: string; trades: number; pnlUsd: number }[];
 }
 
-export async function getProtocolPage(id: ProtocolId): Promise<ProtocolPage | null> {
-  if (!PROTOCOLS[id]) return null;
-  const agents: ProtocolPage["agents"] = [];
-  const wf = new Map<PnlComponent, number>();
-  const kinds = new Map<string, { trades: number; pnlUsd: number }>();
-  for (const d of DB.agents.values()) {
-    const stat = d.byProtocol.find((s) => s.protocol === id);
-    if (stat) agents.push({ slug: d.agent.slug, name: d.agent.name, stat });
-    for (const i of d.interactions) {
-      if (i.protocol !== id) continue;
-      for (const c of i.components) wf.set(c.label, (wf.get(c.label) ?? 0) + c.usd);
-      const k = kinds.get(i.kind) ?? { trades: 0, pnlUsd: 0 };
-      k.trades++;
-      k.pnlUsd += i.pnlUsd;
-      kinds.set(i.kind, k);
-    }
+export interface Meta {
+  cluster: string;
+  programId: string;
+  valuation: string;
+  solPriceUsd: number | null;
+  lastIndexedAt: number | null;
+  /** The indexer has not run recently: numbers may be out of date. Also true before the first run. */
+  stale: boolean;
+}
+
+export class DataServiceError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "DataServiceError";
   }
-  agents.sort((a, b) => b.stat.pnlUsd - a.stat.pnlUsd);
+}
+
+/**
+ * The Monad API names a few fields after EVM concepts (txHash, bondMon). The shared UI uses one vocabulary, so map them
+ * once, at the edge, anywhere they appear in a response.
+ */
+export function adapt(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(adapt);
+  if (v && typeof v === "object") {
+    const o: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) o[k] = adapt(x);
+    if (o.signature === undefined && typeof o.txHash === "string") o.signature = o.txHash;
+    if (o.bondSol === undefined && typeof o.bondMon === "number") o.bondSol = o.bondMon;
+    return o;
+  }
+  return v;
+}
+
+async function http<T>(path: string): Promise<T | null> {
+  if (!API_URL) throw new DataServiceError("The data service isn't configured. Set API_URL.");
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, { next: { revalidate: 5 }, headers: { accept: "application/json" } });
+  } catch {
+    throw new DataServiceError("Can't reach the data service.");
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new DataServiceError(`The data service returned ${res.status}.`, res.status);
+  return adapt(await res.json()) as T;
+}
+
+export async function getMeta(): Promise<Meta> {
+  const m = await http<Partial<Meta>>("/v1/meta").catch(() => null);
   return {
-    protocol: id,
-    agents,
-    waterfall: [...wf.entries()].map(([label, usd]) => ({ label, usd })),
-    totalPnl: agents.reduce((a, x) => a + x.stat.pnlUsd, 0),
-    totalTrades: agents.reduce((a, x) => a + x.stat.trades, 0),
-    kinds: [...kinds.entries()].map(([kind, v]) => ({ kind, ...v })),
+    cluster: m?.cluster ?? "mainnet",
+    programId: m?.programId ?? "",
+    valuation: m?.valuation ?? "USD at market prices",
+    solPriceUsd: m?.solPriceUsd ?? null,
+    lastIndexedAt: m?.lastIndexedAt ?? null,
+    stale: m?.stale ?? true,
   };
 }
 
-export async function getProtocolMatrix() {
-  const rows = await Promise.all((Object.keys(PROTOCOLS) as ProtocolId[]).map((id) => getProtocolPage(id)));
-  return rows.filter((r): r is ProtocolPage => !!r);
+export const getLeaderboard = async (): Promise<LeaderboardRow[]> => (await http<LeaderboardRow[]>("/v1/leaderboard")) ?? [];
+export const getAgentList = async (): Promise<Agent[]> => (await getLeaderboard()).map((r) => r.agent);
+export const getAgent = (slug: string) => http<AgentDetail>(`/v1/agents/${encodeURIComponent(slug)}`);
+
+export async function getFeed(opts: { agentSlug?: string; filter?: FeedFilter; limit?: number } = {}): Promise<PostView[]> {
+  const q = new URLSearchParams();
+  if (opts.agentSlug) q.set("agent", opts.agentSlug);
+  if (opts.filter && opts.filter !== "all") q.set("filter", opts.filter);
+  q.set("limit", String(Math.min(200, Math.max(1, opts.limit ?? 40))));
+  return (await http<PostView[]>(`/v1/feed?${q}`)) ?? [];
 }
+
+export const getCalls = async (agentSlug?: string): Promise<Call[]> =>
+  (await http<Call[]>(`/v1/calls${agentSlug ? `?agent=${encodeURIComponent(agentSlug)}` : ""}`)) ?? [];
+
+export const getProtocolPage = (id: ProtocolId) => http<ProtocolPage>(`/v1/protocols/${encodeURIComponent(id)}`);
+export const getProtocolMatrix = async (): Promise<ProtocolPage[]> => (await http<ProtocolPage[]>("/v1/protocols")) ?? [];

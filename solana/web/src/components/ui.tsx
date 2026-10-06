@@ -61,6 +61,16 @@ export function EligibleChip({ eligible = true }: { eligible?: boolean }) {
   );
 }
 
+/** Why an agent cannot be ranked yet, when something other than history length is in the way. */
+export function Blockers({ notes }: { notes?: string[] }) {
+  if (!notes?.length) return null;
+  return (
+    <ul className="mt-2 space-y-1 text-[13.5px] leading-snug text-warn" aria-label="Why this agent is not ranked">
+      {notes.map((n) => (<li key={n} className="flex gap-1.5"><span aria-hidden>▲</span><span>{n}</span></li>))}
+    </ul>
+  );
+}
+
 /** Shown whenever the 95% Sharpe range includes zero. */
 export function LuckFlag({ m }: { m: Metrics }) {
   if (m.sharpeLo > 0) return null;
