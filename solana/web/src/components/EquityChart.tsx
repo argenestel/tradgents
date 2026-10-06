@@ -51,19 +51,19 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12.5px]" aria-live="polite">
+      <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[13.5px]" aria-live="polite">
         <span className="num text-muted">{dateLabel(points[i].t)}</span>
         <span className="flex items-center gap-1.5">
           <span aria-hidden className="h-0.5 w-4 rounded bg-accent" />
-          <span className="text-muted">Agent</span>
+          <span className="font-semibold text-muted">Agent</span>
           <b className="num">{usd(d.agent[i])}</b>
         </span>
         <span className="flex items-center gap-1.5">
           <span aria-hidden className="w-4 border-t-2 border-dashed border-muted" />
-          <span className="text-muted">{CHAIN_UI.benchmark} buy-and-hold</span>
+          <span className="font-semibold text-muted">Just holding {CHAIN_UI.benchmark}</span>
           <b className="num">{usd(d.bench[i])}</b>
         </span>
-        <span className="text-muted">Drawdown <b className="num text-loss">{pct(d.dd[i], { digits: 1 })}</b></span>
+        <span className="text-muted">Drop from peak <b className="num text-loss">{pct(d.dd[i], { digits: 1 })}</b></span>
       </div>
 
       <div
@@ -85,17 +85,17 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
           {xTicks.map((k) => (
             <line key={k} x1={(k / (n - 1)) * W} x2={(k / (n - 1)) * W} y1="0" y2={H} stroke="var(--line)" vectorEffect="non-scaling-stroke" opacity="0.6" />
           ))}
-          <path d={line(d.bench, d.lo, d.hi, H)} fill="none" stroke="#8a97ad" strokeWidth="1.8" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
-          <path d={line(d.agent, d.lo, d.hi, H)} fill="none" stroke="var(--accent)" strokeWidth="2.2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <path d={line(d.bench, d.lo, d.hi, H)} fill="none" stroke="var(--muted)" strokeWidth="1.8" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
+          <path d={line(d.agent, d.lo, d.hi, H)} fill="none" stroke="var(--accent)" strokeWidth="2.6" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           {hover !== null && <line x1={(hover / (n - 1)) * W} x2={(hover / (n - 1)) * W} y1="0" y2={H} stroke="var(--muted)" vectorEffect="non-scaling-stroke" />}
         </svg>
         {/* end-point dots + value labels */}
         {[
           { v: d.agent[n - 1], c: "var(--accent)", bold: true },
-          { v: d.bench[n - 1], c: "#8a97ad", bold: false },
+          { v: d.bench[n - 1], c: "var(--muted)", bold: false },
         ].map((e) => (
           <span key={e.c} className="pointer-events-none absolute right-0 flex -translate-y-1/2 items-center gap-1.5" style={{ top: `${yOf(e.v)}%` }}>
-            <span aria-hidden className="absolute -left-[3px] size-2.5 -translate-x-full rounded-full border-2 border-white" style={{ background: e.c }} />
+            <span aria-hidden className="absolute -left-[3px] size-2.5 -translate-x-full rounded-full border-2 border-bg" style={{ background: e.c }} />
             <span className={`num pl-1 text-[12px] ${e.bold ? "font-semibold" : "text-muted"}`} style={{ color: e.bold ? e.c : undefined }}>{usd(e.v)}</span>
           </span>
         ))}
@@ -116,8 +116,8 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
           <line x1="0" x2={W} y1="6" y2="6" stroke="var(--line)" vectorEffect="non-scaling-stroke" />
           <path
             d={`M0,6 ${d.dd.map((v, k) => `L${(k / (n - 1)) * W},${6 + (ddY(v) / 100) * (DD_H - 14)}`).join(" ")} L${W},6 Z`}
-            fill="rgba(216,48,47,0.12)"
-            stroke="#e0474a"
+            fill="rgba(207,48,48,0.12)"
+            stroke="var(--loss)"
             strokeWidth="1.5"
             vectorEffect="non-scaling-stroke"
           />

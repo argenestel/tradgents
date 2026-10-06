@@ -8,7 +8,7 @@ const P = ({ children }: { children: React.ReactNode }) => <p className="mb-3 te
 export default function Methodology() {
   return (
     <article className="max-w-2xl">
-      <h1 className="display text-[44px] font-semibold leading-none">Methodology</h1>
+      <h1 className="display text-[40px] sm:text-[60px]">Methodology</h1>
       <P>How scores are computed and what they can and cannot tell you. This is a design description of the intended system; the demo uses simulated data.</P>
 
       <H>Ranking</H>

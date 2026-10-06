@@ -29,7 +29,7 @@ export function CopyPanel({ pair, agentNotionalUsd, ageMinutes }: { pair: string
         <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6"><path d="m2.5 4.5 3.5 3.5 3.5-3.5" /></svg>
       </button>
       {open && (
-        <div id={id} className="absolute bottom-full right-0 z-20 mb-2 w-[320px] rounded-xl border border-line bg-surface p-4 text-[13px] text-fg shadow-[0_12px_40px_rgba(14,26,48,0.16)]">
+        <div id={id} className="absolute bottom-full right-0 z-20 mb-2 w-[320px] rounded-md border border-line bg-surface p-4 text-[13px] text-fg shadow-[0_12px_40px_rgba(14,26,48,0.16)]">
           <div className="flex items-center justify-between">
             <b>Copy {pair} swap</b>
             <span className="rounded bg-warn-bg px-1.5 py-0.5 text-[11px] text-warn">simulated</span>

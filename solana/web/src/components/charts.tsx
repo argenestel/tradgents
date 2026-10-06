@@ -17,65 +17,53 @@ export function Sparkline({ values, width = 84, height = 28 }: { values: number[
   );
 }
 
-const BAR_AREA = 168;
-
 /**
- * Vertical profit waterfall: each component floats from where the previous one
- * ended; the last bar is the net. Estimated components are hatched. Values are
- * always printed (sign + arrow), so colour is never the only signal.
+ * Profit decomposition as a ledger: each line floats from where the previous one ended, the last line is the net.
+ * Estimated lines are hatched. Values always carry a sign and an arrow, so colour is never the only signal.
  */
 export function Waterfall({ items, unrealizedUsd }: { items: { label: PnlComponent; usd: number }[]; unrealizedUsd?: number }) {
-  type Col = { key: string; label: string; usd: number; estimated?: boolean; start: number; end: number; total?: boolean };
-  const cols: Col[] = [];
+  type Row = { key: string; label: string; usd: number; estimated?: boolean; start: number; end: number; total?: boolean };
+  const rows: Row[] = [];
   let run = 0;
   for (const it of items) {
     const meta = COMPONENTS[it.label];
-    cols.push({ key: it.label, label: meta.label.replace(" (est.)", "").replace(" (limit × price)", "").replace("Lending interest", "Lending interest"), usd: it.usd, estimated: meta.estimated, start: run, end: run + it.usd });
+    rows.push({ key: it.label, label: meta.label.replace(" (est.)", "").replace(" (limit × price)", ""), usd: it.usd, estimated: meta.estimated, start: run, end: run + it.usd });
     run += it.usd;
   }
   if (unrealizedUsd !== undefined) {
-    cols.push({ key: "unrealized", label: "Unrealized", usd: unrealizedUsd, start: run, end: run + unrealizedUsd });
+    rows.push({ key: "unrealized", label: "Open positions", usd: unrealizedUsd, start: run, end: run + unrealizedUsd });
     run += unrealizedUsd;
   }
-  cols.push({ key: "net", label: "Net", usd: run, start: 0, end: run, total: true });
+  rows.push({ key: "net", label: "Net result", usd: run, start: 0, end: run, total: true });
 
-  const lo = Math.min(0, ...cols.flatMap((c) => [c.start, c.end]));
-  const hi = Math.max(0, ...cols.flatMap((c) => [c.start, c.end]));
+  const lo = Math.min(0, ...rows.flatMap((r) => [r.start, r.end]));
+  const hi = Math.max(0, ...rows.flatMap((r) => [r.start, r.end]));
   const span = hi - lo || 1;
-  const y = (v: number) => ((v - lo) / span) * BAR_AREA;
-  const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${v < 0 ? "−" : "+"}${Math.abs(Math.round(v)).toLocaleString("en-US")}` : `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(Math.abs(v) < 100 ? 1 : 0)}`);
+  const x = (v: number) => ((v - lo) / span) * 100;
+  const zero = x(0);
 
   return (
-    <div role="table" aria-label="Profit decomposition" className="overflow-x-auto">
-      <div className="flex min-w-[560px] gap-3 pt-6" style={{ height: BAR_AREA + 56 }}>
-        {cols.map((c, i) => {
-          const bottom = y(Math.min(c.start, c.end));
-          const h = Math.max(2, Math.abs(y(c.end) - y(c.start)));
-          const pos = c.usd >= 0;
-          const tone = c.total ? "bg-accent" : c.estimated ? "hatch" : pos ? "bg-[#1fb865]" : "bg-[#ef6b68]";
-          return (
-            <div key={c.key} role="row" className="relative flex-1" style={{ minWidth: 48 }}>
-              <div role="cell" className="relative" style={{ height: BAR_AREA }}>
-                <span
-                  className={`num absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[12px] font-semibold ${c.total ? "text-accent" : pos ? "text-gain" : "text-loss"}`}
-                  style={{ bottom: bottom + h + 3 }}
-                >
-                  <span aria-hidden className="mr-0.5 text-[9px]">{pos ? "▲" : "▼"}</span>
-                  {fmt(c.usd)}
-                </span>
-                <span className={`absolute inset-x-1 rounded-[3px] ${tone}`} style={{ bottom, height: h }} aria-hidden />
-                {i < cols.length - 1 && (
-                  <span aria-hidden className="absolute border-t border-dashed border-line" style={{ bottom: y(c.end), left: "calc(100% - 4px)", width: 16 }} />
-                )}
-              </div>
-              <div role="cell" className={`mt-2 text-center text-[11.5px] leading-tight ${c.total ? "font-semibold text-fg" : "text-muted"}`}>{c.label}</div>
+    <div role="table" aria-label="Where the profit came from">
+      {rows.map((r) => {
+        const left = x(Math.min(r.start, r.end));
+        const width = Math.max(0.8, Math.abs(x(r.end) - x(r.start)));
+        const pos = r.usd >= 0;
+        const tone = r.total ? "bg-fg" : r.estimated ? "hatch" : pos ? "bg-[#1a9d6a]" : "bg-[#d94a43]";
+        return (
+          <div key={r.key} role="row" className={`grid grid-cols-[minmax(96px,150px)_1fr_5.75rem] items-center gap-3 py-[7px] ${r.total ? "mt-1 border-t-2 border-fg pt-3" : "border-b border-line"}`}>
+            <div role="cell" className={`truncate text-[14px] ${r.total ? "font-extrabold" : "text-muted"}`}>{r.label}</div>
+            <div role="cell" className="relative h-[18px]">
+              <span aria-hidden className="absolute inset-y-[-7px] w-px bg-line" style={{ left: `${zero}%` }} />
+              <span aria-hidden className={`absolute inset-y-[3px] rounded-[2px] ${tone}`} style={{ left: `${left}%`, width: `${width}%` }} />
             </div>
-          );
-        })}
-      </div>
-      {cols.some((c) => c.estimated) && <p className="mt-1 text-[11px] text-warn">Hatched = estimated, not an exact on-chain amount.</p>}
+            <div role="cell" className={`num text-right text-[14px] ${r.total ? "font-extrabold" : "font-bold"} ${pos ? "text-gain" : "text-loss"}`}>
+              <span aria-hidden className="mr-1 text-[9px]">{pos ? "▲" : "▼"}</span>
+              {usd(r.usd, { sign: true })}
+            </div>
+          </div>
+        );
+      })}
+      {rows.some((r) => r.estimated) && <p className="mt-2 text-[13px] text-warn">Hatched lines are estimates, not exact on-chain amounts.</p>}
     </div>
   );
 }
-
-export { usd as _usd };

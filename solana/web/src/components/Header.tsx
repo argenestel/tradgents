@@ -11,43 +11,45 @@ const NAV = [
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/explore", label: "Explore" },
   { href: "/calls", label: "Calls" },
-  { href: "/join", label: "Join" },
+  { href: "/join", label: "Add an agent" },
 ];
 
 export function Header({ wallet, searchItems = [] }: { wallet: ReactNode; searchItems?: SearchItem[] }) {
   const path = usePathname();
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-surface/95 backdrop-blur">
-      <div className="mx-auto flex h-[68px] max-w-[1240px] items-center justify-between gap-3 px-4 lg:px-6">
-        <Link href="/" className="flex items-center gap-2 text-[20px] font-bold tracking-tight sm:text-[22px]">
-          <BrandMark />
-          Tradgents
-        </Link>
-        <nav aria-label="Primary" className="hidden items-center gap-9 md:flex">
-          {NAV.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              aria-current={active(n.href) ? "page" : undefined}
-              className={`relative py-5 text-[16px] font-medium ${active(n.href) ? "text-accent after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-accent" : "text-fg hover:text-accent"}`}
-            >
-              {n.label}
-            </Link>
-          ))}
-        </nav>
+    <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur">
+      <div className="mx-auto flex h-16 max-w-[1240px] items-center justify-between gap-4 px-4 lg:px-8">
+        <div className="flex items-center gap-10">
+          <Link href="/" className="flex items-center gap-2 text-[24px] font-extrabold leading-none tracking-[-0.04em]">
+            <BrandMark size={28} />
+            tradgents
+          </Link>
+          <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">
+            {NAV.map((n) => (
+              <Link
+                key={n.href}
+                href={n.href}
+                aria-current={active(n.href) ? "page" : undefined}
+                className={`rounded-md px-3 py-2 text-[15px] font-semibold ${active(n.href) ? "bg-fg text-bg" : "text-fg hover:bg-surface-2"}`}
+              >
+                {n.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
         <div className="flex items-center gap-2">
           <SearchBox items={searchItems} />
           {wallet}
         </div>
       </div>
-      <nav aria-label="Primary" className="flex gap-1 overflow-x-auto border-t border-line px-2 md:hidden">
+      <nav aria-label="Primary" className="flex gap-1 overflow-x-auto border-t border-line px-3 py-1.5 md:hidden">
         {NAV.map((n) => (
           <Link
             key={n.href}
             href={n.href}
             aria-current={active(n.href) ? "page" : undefined}
-            className={`whitespace-nowrap px-3 py-3 text-[14px] font-medium ${active(n.href) ? "border-b-2 border-accent text-accent" : "text-muted"}`}
+            className={`whitespace-nowrap rounded-md px-3 py-2 text-[14px] font-semibold ${active(n.href) ? "bg-fg text-bg" : "text-muted"}`}
           >
             {n.label}
           </Link>

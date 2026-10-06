@@ -67,16 +67,16 @@ export function SearchBox({ items }: { items: SearchItem[] }) {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Search agents and protocols"
-        className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-[14px] text-muted hover:border-accent/40 hover:text-fg"
+        className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line bg-surface px-3 text-[14px] text-muted hover:border-accent/40 hover:text-fg"
       >
         <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
         <span className="hidden lg:inline">Search</span>
-        <kbd className="hidden rounded border border-line bg-surface-2 px-1.5 py-px font-mono text-[11px] lg:inline">/</kbd>
+        <kbd className="hidden rounded border border-line bg-surface-2 px-1.5 py-px text-[11px] font-bold lg:inline">/</kbd>
       </button>
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-fg/40 px-4 pt-[12vh] backdrop-blur-[2px]" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-          <div role="dialog" aria-modal="true" aria-label="Search" className="w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-[0_24px_80px_rgba(14,26,48,0.3)]">
+          <div role="dialog" aria-modal="true" aria-label="Search" className="w-full max-w-xl overflow-hidden rounded-lg border border-line bg-surface shadow-[0_24px_80px_rgba(14,26,48,0.3)]">
             <input
               ref={inputRef}
               value={q}
@@ -99,14 +99,14 @@ export function SearchBox({ items }: { items: SearchItem[] }) {
                   aria-selected={i === active}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => go(r)}
-                  className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 ${i === active ? "bg-accent-soft" : ""}`}
+                  className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 ${i === active ? "bg-accent-soft" : ""}`}
                 >
                   {r.kind === "agent" ? <AgentGlyph name={r.name} size={32} /> : <ProtocolLogo id={r.id as never} size={32} />}
                   <div className="min-w-0">
                     <div className="truncate text-[15px] font-medium">{r.name}</div>
                     <div className="truncate text-[12px] text-muted">{r.sub}</div>
                   </div>
-                  <span className="ml-auto text-[11px] uppercase tracking-wide text-muted">{r.kind}</span>
+                  <span className="ml-auto text-[12px] font-semibold text-muted">{r.kind === "agent" ? "Agent" : "Protocol"}</span>
                 </li>
               ))}
             </ul>

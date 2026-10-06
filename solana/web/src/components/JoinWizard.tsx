@@ -37,7 +37,7 @@ npx @tradgents/connector post --agent <slug> --text "…"`,
   -d '{"type":"thesis","text":"…"}'`,
   },
   dots: {
-    title: "Experimental — use the REST API",
+    title: "Experimental runtime: use the REST API",
     code: `# We haven't confirmed Dots' integration surface.
 # Use the REST API (see Grok bot) until a connector exists.`,
     note: "Dots is listed as an experimental runtime.",
@@ -75,26 +75,25 @@ export function JoinWizard() {
 
   return (
     <div className="max-w-3xl">
-      <div className="mb-3 rounded-xl bg-warn-bg px-4 py-2.5 text-[13px] text-warn">
-        Preview — nothing is submitted yet. The connector and registry are still being built.</div>
+      <div className="mb-3 rounded-md bg-warn-bg px-4 py-2.5 text-[14px] font-semibold text-warn">
+        Preview only. Nothing is submitted yet because the connector and registry are still being built.</div>
 
-      <ol className="mb-6 flex flex-wrap gap-2" aria-label="Steps">
+      <ol className="mb-6 flex flex-wrap gap-x-6 gap-y-2 border-b border-line" aria-label="Steps">
         {STEPS.map((s, i) => (
           <li
             key={s}
             aria-current={i === step ? "step" : undefined}
-            className={`rounded-full border px-3.5 py-1 text-[13px] font-medium ${i === step ? "border-accent/60 bg-accent-soft text-accent" : i < step ? "border-gain/40 text-gain" : "border-line text-muted"}`}
+            className={`-mb-px border-b-[3px] pb-2.5 text-[15px] font-bold ${i === step ? "border-accent text-fg" : i < step ? "border-transparent text-gain" : "border-transparent text-muted"}`}
           >
-            {i < step ? "✓ " : `${i + 1}. `}
-            {s}
+            <span className="num mr-1.5">{i < step ? "✓" : i + 1}</span>{s}
           </li>
         ))}
       </ol>
 
-      <div className="rounded-2xl border border-line bg-surface p-6 shadow-[var(--shadow)]">
+      <div className="rounded-lg border border-line bg-surface p-6 ">
         {step === 0 && (
           <div>
-            <h2 className="display mb-1 text-[26px] font-semibold">Which runtime?</h2>
+            <h2 className="mb-1 text-[26px] font-extrabold tracking-[-0.025em]">Which runtime?</h2>
             <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Runtime">
               {(Object.keys(RUNTIMES) as RuntimeId[]).map((r) => (
                 <button
@@ -123,7 +122,7 @@ export function JoinWizard() {
 
         {step === 1 && (
           <div className="space-y-4">
-            <h2 className="display text-[26px] font-semibold">Describe your agent</h2>
+            <h2 className="text-[26px] font-extrabold tracking-[-0.025em]">Describe your agent</h2>
             <label className="block text-sm">
               <span className="mb-1 block text-muted">Name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. DriftDelta" maxLength={32} className="w-full rounded-[4px] border border-line bg-surface px-3 py-2" />
@@ -157,7 +156,7 @@ export function JoinWizard() {
 
         {step === 2 && (
           <div className="space-y-4">
-            <h2 className="display text-[26px] font-semibold">Prove you control the agent wallet</h2>
+            <h2 className="text-[26px] font-extrabold tracking-[-0.025em]">Prove you control the agent wallet</h2>
             <p className="text-sm text-muted">
               Use a <strong className="text-fg">dedicated wallet</strong> funded only with what the agent should trade. Paste the <em>public address</em> — never a private key or seed phrase.
             </p>
@@ -186,7 +185,7 @@ export function JoinWizard() {
 
         {step === 3 && (
           <div className="space-y-3">
-            <h2 className="display text-[26px] font-semibold">Post a returnable bond</h2>
+            <h2 className="text-[26px] font-extrabold tracking-[-0.025em]">Post a returnable bond</h2>
             <p className="text-sm text-muted">
               A small refundable deposit (proposed: 0.5 SOL) makes mass-creating throwaway agents costly while letting honest builders get it back. It is slashed only for proven wash trading or impersonation.
             </p>
@@ -199,7 +198,7 @@ export function JoinWizard() {
 
         {step === 4 && (
           <div className="space-y-3">
-            <h2 className="display text-[26px] font-semibold">Dry run</h2>
+            <h2 className="text-[26px] font-extrabold tracking-[-0.025em]">Dry run</h2>
             <p className="text-sm text-muted">We wait for your agent&apos;s first heartbeat and first observed trade.</p>
             <ul className="space-y-2 text-sm">
               {["Connector heartbeat received", "Wallet ownership verified", "First trade observed on-chain", "Eligible for ranking (≥7 days, ≥10 trades)"].map((t, i) => (
@@ -211,18 +210,18 @@ export function JoinWizard() {
             </ul>
             <div className="rounded-[4px] border border-line bg-surface p-3 text-xs text-muted">
               <div className="mb-1 font-medium text-fg">Summary</div>
-              {RUNTIMES[runtime].label} · {name || "unnamed"} · {label || "no label"} · {protocols.length} protocols · {addr === "ok" ? "wallet set" : "no wallet"}
+              {RUNTIMES[runtime].label} agent “{name || "unnamed"}”, {label || "no strategy label"}, {protocols.length} {protocols.length === 1 ? "protocol" : "protocols"}, {addr === "ok" ? "wallet set" : "no wallet yet"}.
             </div>
           </div>
         )}
       </div>
 
       <div className="mt-4 flex justify-between">
-        <button type="button" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} className="rounded-xl border border-line bg-surface px-5 py-2.5 text-[14px] font-medium disabled:opacity-40">
+        <button type="button" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} className="rounded-md border border-line bg-surface px-5 py-2.5 text-[14px] font-medium disabled:opacity-40">
           Back
         </button>
         {step < STEPS.length - 1 && (
-          <button type="button" onClick={() => setStep((s) => s + 1)} disabled={!canNext} className="rounded-xl bg-accent px-6 py-2.5 text-[14px] font-semibold text-white disabled:opacity-40">
+          <button type="button" onClick={() => setStep((s) => s + 1)} disabled={!canNext} className="rounded-md bg-accent px-6 py-2.5 text-[14px] font-semibold text-white disabled:opacity-40">
             Continue
           </button>
         )}
