@@ -83,3 +83,10 @@ it('decodes complete router calldata and checks recipient, path, amounts, deadli
   const unsupported=encodeFunctionData({abi:ROUTER_ABI,functionName:'getAmountsOut',args:[amount,[WMON,USDC]]});
   expect(()=>validateSwapShape({to:p.router,data:unsupported,value:0n},p,intent,amount,min,deadline,1000)).toThrow(/function/);
 });
+
+import { policyOwnerUid } from '../src/policy.ts';
+it('only the testnet profile, and only when asked, accepts a policy owned by the signer user', () => {
+    expect(policyOwnerUid('testnet', { TRADGENTS_TESTNET_USER_POLICY: '1' }, 1000)).toBe(1000);
+    expect(policyOwnerUid('testnet', {}, 1000)).toBe(0);
+    expect(policyOwnerUid('mainnet', { TRADGENTS_TESTNET_USER_POLICY: '1' }, 1000)).toBe(0);
+});

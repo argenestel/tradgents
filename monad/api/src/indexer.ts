@@ -42,6 +42,7 @@ export function priceWithLiquidityFloor<T extends PriceSample>(sample:T,floorUsd
 }
 interface TraceFrame {from?:string;to?:string;value?:string;type?:string;error?:string;calls?:TraceFrame[]}
 
+interface Prefetched { block:Awaited<ReturnType<PublicClient['getBlock']>>; agents:Agent[]; openings:Map<string,Awaited<ReturnType<Store['opening']>>>; logs:Record<string,unknown>[] }
 export class Indexer {
   private readonly store:Store;
   private readonly tokenCache=new Map<string,TokenMeta>();
@@ -67,7 +68,14 @@ export class Indexer {
     const from=initialized?head+1:await this.initialCursor(latest);
     if(from>latest){await this.store.setState('agent_index_started','1',now);return {from,to:latest,applied:0};}
     let applied=0;
-    for(let n=from;n<=latest;n++){this.check(signal);applied+=await this.indexBlock(BigInt(n),now,signal);}
+    // Fetch a window of blocks and wallet logs together (a few concurrent requests), then apply them strictly in order.
+    const window=Math.max(1,Math.min(this.config.logRangeBlocks,100));
+    for(let start=from;start<=latest;start+=window){
+      this.check(signal);const end=Math.min(latest,start+window-1);
+      const prefetched=await this.prefetch(start,end,signal);
+      for(let n=start;n<=end;n++){this.check(signal);applied+=await this.indexBlock(BigInt(n),now,signal,prefetched.get(n));}
+      this.check(signal);await this.store.setState('agent_index_started','1',now); // progress survives an interrupted run
+    }
     this.check(signal);await this.store.setState('agent_index_started','1',now);
     return {from,to:latest,applied};
   }
@@ -164,10 +172,13 @@ export class Indexer {
     return {agent,opening};
   }
   private async scanRegistry(latest:bigint,now:number,signal?:AbortSignal):Promise<void> {
-    let from=Number(await this.store.state('registry_block')??-1)+1;
-    const latestNumber=Number(latest);if(from>latestNumber)return;
+    const stored=await this.store.state('registry_block');
+    const latestNumber=Number(latest);
+    // Never scan from genesis: begin at the registry's deployment block (REGISTRY_START_BLOCK), or at the head if it is unknown.
+    let from=stored!==undefined?Number(stored)+1:(this.config.registryStartBlock??latestNumber);
+    if(from>latestNumber)return;
     while(from<=latestNumber){
-      this.check(signal);const to=Math.min(latestNumber,from+1999);
+      this.check(signal);const to=Math.min(latestNumber,from+this.config.logRangeBlocks-1);
       const logs=await this.wait(this.client.getLogs({address:this.config.registryAddress,fromBlock:BigInt(from),toBlock:BigInt(to)}),signal);
       const events:Array<{log:typeof logs[number];decoded:{eventName:string;args:Record<string,unknown>}}> = [];
       for(const log of logs){try{events.push({log,decoded:decodeEventLog({abi:REGISTRY_EVENTS,data:log.data,topics:log.topics as never}) as unknown as {eventName:string;args:Record<string,unknown>}});}catch{}}
@@ -214,19 +225,36 @@ export class Indexer {
     }catch(error){if(signal?.aborted)throw signal.reason;return {ok:false,differences:{__rpc:{replayed:'unavailable',chain:error instanceof Error?error.name:'error'}}};}
   }
 
-  private async indexBlock(blockNumber:bigint,now:number,signal?:AbortSignal):Promise<number> {
-    this.check(signal);
-    const block=await this.wait(this.client.getBlock({blockNumber,includeTransactions:true}),signal);
-    const agents=await this.store.agents();
-    const openings=new Map<string,Awaited<ReturnType<Store['opening']>>>();
+  private async prefetch(start:number,end:number,signal?:AbortSignal):Promise<Map<number,Prefetched>> {
+    const agents=await this.store.agents(),openings=new Map<string,Awaited<ReturnType<Store['opening']>>>();
     for(const agent of agents)openings.set(agent.slug,await this.store.opening(agent.slug));
+    const logs:Record<string,unknown>[]=[],request=(this.client as unknown as {request:(p:{method:string;params:unknown[]},o?:{signal?:AbortSignal})=>Promise<Record<string,unknown>[]>}).request;
+    for(const agent of agents){
+      for(const topics of [[TRANSFER_TOPIC,topicAddress(agent.wallet),null],[TRANSFER_TOPIC,null,topicAddress(agent.wallet)]]){
+        logs.push(...await this.wait(request({method:'eth_getLogs',params:[{fromBlock:numberToHex(BigInt(start)),toBlock:numberToHex(BigInt(end)),topics}]},{signal}),signal));
+      }
+    }
+    const out=new Map<number,Prefetched>(),numbers=Array.from({length:end-start+1},(_,k)=>start+k);
+    for(let k=0;k<numbers.length;k+=10){ // ten blocks at a time
+      this.check(signal);
+      const blocks=await Promise.all(numbers.slice(k,k+10).map(n=>this.wait(this.client.getBlock({blockNumber:BigInt(n),includeTransactions:true}),signal)));
+      blocks.forEach((block,j)=>{const n=numbers[k+j];out.set(n,{block,agents,openings,logs:logs.filter(l=>Number(BigInt(String(l.blockNumber)))===n)});});
+    }
+    return out;
+  }
+  private async indexBlock(blockNumber:bigint,now:number,signal?:AbortSignal,pre?:Prefetched):Promise<number> {
+    this.check(signal);
+    const block=pre?.block??await this.wait(this.client.getBlock({blockNumber,includeTransactions:true}),signal);
+    const agents=pre?.agents??await this.store.agents();
+    const openings=new Map<string,Awaited<ReturnType<Store['opening']>>>();
+    if(pre)for(const [k,v] of pre.openings)openings.set(k,v);else for(const agent of agents)openings.set(agent.slug,await this.store.opening(agent.slug));
     const byWallet=new Map(agents.map(a=>[lower(a.wallet),a]));
     const relevantAgents=agents.filter(a=>Number(blockNumber)>(openings.get(a.slug)?.blockNumber??0));
     const wallets=relevantAgents.map(a=>a.wallet);
     const logsByHash=new Map<string,Record<string,unknown>[]>();
     for(const wallet of wallets){
       for(const topics of [[TRANSFER_TOPIC,topicAddress(wallet),null],[TRANSFER_TOPIC,null,topicAddress(wallet)]] as const){
-        const logs=await this.walletLogs(blockNumber,topics as unknown as [Hex,Hex|null,Hex|null],signal);
+        const logs=pre?pre.logs.filter(l=>{const t=(l.topics as string[]).map(x=>String(x).toLowerCase());return (topics[1]!==null&&t[1]===String(topics[1]).toLowerCase())||(topics[2]!==null&&t[2]===String(topics[2]).toLowerCase());}):await this.walletLogs(blockNumber,topics as unknown as [Hex,Hex|null,Hex|null],signal);
         for(const log of logs){const hash=lower(String(log.transactionHash));const list=logsByHash.get(hash)??[];list.push(log as unknown as Record<string,unknown>);logsByHash.set(hash,list);}
       }
     }

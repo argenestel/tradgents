@@ -30,20 +30,20 @@ export class Store {
   async agent(slug:string):Promise<Agent|undefined> { return (await this.q.query<{data:Agent}>('select data from monad.agents where slug=$1',[slug]))[0]?.data; }
   async agentByWallet(wallet:string):Promise<Agent|undefined> { return (await this.q.query<{data:Agent}>('select data from monad.agents where lower(wallet)=lower($1)',[wallet]))[0]?.data; }
   async putAgent(a:Agent, registeredBlock=0, now=a.startedAt):Promise<void> {
-    await this.q.query('insert into monad.agents(slug,wallet,owner,data,registered_block,created_ms) values($1,$2,$3,$4::jsonb,$5,$6)',[a.slug,a.wallet.toLowerCase(),a.owner.toLowerCase(),JSON.stringify(a),registeredBlock,now]);
+    await this.q.query('insert into monad.agents(slug,wallet,owner,data,registered_block,created_ms) values($1,$2,$3,$4::text::jsonb,$5,$6)',[a.slug,a.wallet.toLowerCase(),a.owner.toLowerCase(),JSON.stringify(a),registeredBlock,now]);
   }
   async opening(slug:string):Promise<Opening|undefined> {
     const r=(await this.q.query<{block_number:string;block_hash:string;ts_ms:string;balances:unknown;token_decimals:unknown;prices:unknown;price_quality:unknown}>('select block_number,block_hash,ts_ms,balances,token_decimals,prices,price_quality from monad.openings where agent_slug=$1',[slug]))[0];
     return r&&{blockNumber:num(r.block_number),blockHash:r.block_hash,tsMs:num(r.ts_ms),balances:json(r.balances),tokenDecimals:json(r.token_decimals),prices:json(r.prices),priceQuality:json(r.price_quality)};
   }
   async putOpening(slug:string,o:Opening):Promise<void> {
-    await this.q.query('insert into monad.openings(agent_slug,block_number,block_hash,ts_ms,balances,token_decimals,prices,price_quality) values($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb) on conflict(agent_slug) do nothing',[slug,o.blockNumber,o.blockHash,o.tsMs,JSON.stringify(o.balances),JSON.stringify(o.tokenDecimals??{}),JSON.stringify(o.prices),JSON.stringify(o.priceQuality??{})]);
+    await this.q.query('insert into monad.openings(agent_slug,block_number,block_hash,ts_ms,balances,token_decimals,prices,price_quality) values($1,$2,$3,$4,$5::text::jsonb,$6::text::jsonb,$7::text::jsonb,$8::text::jsonb) on conflict(agent_slug) do nothing',[slug,o.blockNumber,o.blockHash,o.tsMs,JSON.stringify(o.balances),JSON.stringify(o.tokenDecimals??{}),JSON.stringify(o.prices),JSON.stringify(o.priceQuality??{})]);
   }
   async putIndexedRegistration(a:Agent,o:Opening):Promise<void> {
     const flowUsd=openingFlowUsd(o),registered={...a,startCapitalUsd:flowUsd};
     await this.putAgent(registered,o.blockNumber,o.tsMs);await this.putOpening(a.slug,o);
     for(const [token,usd] of Object.entries(o.prices))await this.putPriceSample({token,tsMs:o.tsMs,usd,source:'pyth-monad-onchain',quality:o.priceQuality?.[token]??'estimated'});
-    await this.q.query('insert into monad.equity_snapshots(agent_slug,ts_ms,block_number,equity_usd,mon_price,flow_usd,balances,unpriced,integrity_ok) values($1,$2,$3,$4,$5,$4,$6::jsonb,$7,false)',[registered.slug,o.tsMs,o.blockNumber,flowUsd,o.prices.MON??0,JSON.stringify(o.balances),Object.keys(o.balances).filter(t=>o.prices[t]===undefined||o.priceQuality?.[t]!=='oracle')]);
+    await this.q.query('insert into monad.equity_snapshots(agent_slug,ts_ms,block_number,equity_usd,mon_price,flow_usd,balances,unpriced,integrity_ok) values($1,$2,$3,$4,$5,$4,$6::text::jsonb,$7,false)',[registered.slug,o.tsMs,o.blockNumber,flowUsd,o.prices.MON??0,JSON.stringify(o.balances),Object.keys(o.balances).filter(t=>o.prices[t]===undefined||o.priceQuality?.[t]!=='oracle')]);
   }
 
   async state(key:string):Promise<string|undefined> { return (await this.q.query<{value:string}>('select value from monad.indexer_state where key=$1',[key]))[0]?.value; }
@@ -56,11 +56,11 @@ export class Store {
       await s.q.query('delete from monad.used_nonces where lower(wallet)=lower($1) and expires_ms<$2',[proof.wallet,proof.now]);
       const inserted=await s.q.query('insert into monad.used_nonces(wallet,nonce,expires_ms,created_ms) values(lower($1),$2,$3,$4) on conflict(wallet,nonce) do nothing returning nonce',[proof.wallet,nonce.toString(),proof.expiresMs,proof.now]);
       if(!inserted.length)throw new Error('invalid nonce');
-      await s.q.query('insert into monad.agents(slug,wallet,owner,data,registered_block,created_ms) values($1,$2,$3,$4::jsonb,$5,$6)',[registered.slug,registered.wallet.toLowerCase(),registered.owner.toLowerCase(),JSON.stringify(registered),o.blockNumber,registered.startedAt]);
-      await s.q.query('insert into monad.openings(agent_slug,block_number,block_hash,ts_ms,balances,token_decimals,prices,price_quality) values($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb)',[a.slug,o.blockNumber,o.blockHash,o.tsMs,JSON.stringify(o.balances),JSON.stringify(o.tokenDecimals??{}),JSON.stringify(o.prices),JSON.stringify(o.priceQuality??{})]);
+      await s.q.query('insert into monad.agents(slug,wallet,owner,data,registered_block,created_ms) values($1,$2,$3,$4::text::jsonb,$5,$6)',[registered.slug,registered.wallet.toLowerCase(),registered.owner.toLowerCase(),JSON.stringify(registered),o.blockNumber,registered.startedAt]);
+      await s.q.query('insert into monad.openings(agent_slug,block_number,block_hash,ts_ms,balances,token_decimals,prices,price_quality) values($1,$2,$3,$4,$5::text::jsonb,$6::text::jsonb,$7::text::jsonb,$8::text::jsonb)',[a.slug,o.blockNumber,o.blockHash,o.tsMs,JSON.stringify(o.balances),JSON.stringify(o.tokenDecimals??{}),JSON.stringify(o.prices),JSON.stringify(o.priceQuality??{})]);
       await s.q.query('insert into monad.wallet_proofs(wallet,signature,message_hash,sig_kind,created_ms) values(lower($1),$2,$3,$4,$5)',[proof.wallet,proof.signature,proof.messageHash,proof.sigKind,proof.now]);
       for(const [token,usd] of Object.entries(o.prices)) await s.putPriceSample({token,tsMs:o.tsMs,usd,source:'pyth-monad-onchain',quality:o.priceQuality?.[token]??'estimated'});
-      await s.q.query('insert into monad.equity_snapshots(agent_slug,ts_ms,block_number,equity_usd,mon_price,flow_usd,balances,unpriced,integrity_ok) values($1,$2,$3,$4,$5,$4,$6::jsonb,$7,false)',[registered.slug,o.tsMs,o.blockNumber,flowUsd,o.prices.MON??0,JSON.stringify(o.balances),Object.keys(o.balances).filter(t=>o.prices[t]===undefined||o.priceQuality?.[t]!=='oracle')]);
+      await s.q.query('insert into monad.equity_snapshots(agent_slug,ts_ms,block_number,equity_usd,mon_price,flow_usd,balances,unpriced,integrity_ok) values($1,$2,$3,$4,$5,$4,$6::text::jsonb,$7,false)',[registered.slug,o.tsMs,o.blockNumber,flowUsd,o.prices.MON??0,JSON.stringify(o.balances),Object.keys(o.balances).filter(t=>o.prices[t]===undefined||o.priceQuality?.[t]!=='oracle')]);
     });
   }
   async consumeNonce(wallet:string,nonce:bigint,now:number,expiresMs=now+15*60_000):Promise<void> {
@@ -111,7 +111,7 @@ export class Store {
   }
 
   async putRawTransaction(r:{txHash:string;agentSlug:string;blockNumber:number;blockHash:string;tsMs:number;transaction:unknown;receipt:unknown;status:'finalized'|'safe'}):Promise<boolean> {
-    const rows=await this.q.query('insert into monad.raw_transactions(tx_hash,agent_slug,block_number,block_hash,ts_ms,transaction,receipt,status) values(lower($1),$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8) on conflict(agent_slug,tx_hash) do nothing returning tx_hash',[r.txHash,r.agentSlug,r.blockNumber,r.blockHash,r.tsMs,JSON.stringify(r.transaction),JSON.stringify(r.receipt),r.status]);
+    const rows=await this.q.query('insert into monad.raw_transactions(tx_hash,agent_slug,block_number,block_hash,ts_ms,transaction,receipt,status) values(lower($1),$2,$3,$4,$5,$6::text::jsonb,$7::text::jsonb,$8) on conflict(agent_slug,tx_hash) do nothing returning tx_hash',[r.txHash,r.agentSlug,r.blockNumber,r.blockHash,r.tsMs,JSON.stringify(r.transaction),JSON.stringify(r.receipt),r.status]);
     return rows.length>0;
   }
   async putRawLog(r:{chainId:number;txHash:string;logIndex:number;blockNumber:number;blockHash:string;address:string;topic0:string;topics:string[];data:`0x${string}`;status:'finalized'|'safe'}):Promise<void> {
@@ -165,17 +165,17 @@ export class Store {
   }
 
   async insertLedger(r:{agentSlug:string;txHash?:string;blockNumber:number;tsMs:number;token:string;deltaRaw:bigint;kind:'opening'|'flow'|'swap'|'fee'|'unsupported'|'wrap';data?:unknown}):Promise<void> {
-    await this.q.query(`insert into monad.ledger_entries(agent_slug,tx_hash,block_number,ts_ms,token,delta_raw,kind,data) values($1,lower($2),$3,$4,$5,$6,$7,$8::jsonb)
+    await this.q.query(`insert into monad.ledger_entries(agent_slug,tx_hash,block_number,ts_ms,token,delta_raw,kind,data) values($1,lower($2),$3,$4,$5,$6,$7,$8::text::jsonb)
       on conflict(agent_slug,tx_hash,token,kind) do update set block_number=excluded.block_number,ts_ms=excluded.ts_ms,delta_raw=excluded.delta_raw,data=excluded.data`,[r.agentSlug,r.txHash??null,r.blockNumber,r.tsMs,r.token,r.deltaRaw.toString(),r.kind,JSON.stringify(r.data??{})]);
   }
-  async putInteraction(i:Interaction):Promise<void> { await this.q.query('insert into monad.interactions(id,agent_slug,tx_hash,block_number,ts_ms,protocol,kind,data) values($1,$2,lower($3),$4,$5,$6,$7,$8::jsonb) on conflict(agent_slug,tx_hash) do nothing',[i.id,i.agentSlug,i.txHash,i.blockNumber,i.ts,i.protocol,i.kind,JSON.stringify(i)]); }
+  async putInteraction(i:Interaction):Promise<void> { await this.q.query('insert into monad.interactions(id,agent_slug,tx_hash,block_number,ts_ms,protocol,kind,data) values($1,$2,lower($3),$4,$5,$6,$7,$8::text::jsonb) on conflict(agent_slug,tx_hash) do nothing',[i.id,i.agentSlug,i.txHash,i.blockNumber,i.ts,i.protocol,i.kind,JSON.stringify(i)]); }
   async putEquity(agentSlug:string,p:Valuation,blockNumber:number,balances:unknown,integrityOk=true):Promise<void> {
     await this.q.query(`insert into monad.equity_snapshots(agent_slug,ts_ms,block_number,equity_usd,mon_price,flow_usd,balances,unpriced,integrity_ok)
-      values($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) on conflict(agent_slug,block_number) do update set ts_ms=excluded.ts_ms,equity_usd=excluded.equity_usd,mon_price=excluded.mon_price,flow_usd=excluded.flow_usd,balances=excluded.balances,unpriced=excluded.unpriced,integrity_ok=excluded.integrity_ok`,[agentSlug,p.t,blockNumber,p.usd,p.sol,p.flow??0,JSON.stringify(balances),p.unpriced??[],integrityOk]);
+      values($1,$2,$3,$4,$5,$6,$7::text::jsonb,$8,$9) on conflict(agent_slug,block_number) do update set ts_ms=excluded.ts_ms,equity_usd=excluded.equity_usd,mon_price=excluded.mon_price,flow_usd=excluded.flow_usd,balances=excluded.balances,unpriced=excluded.unpriced,integrity_ok=excluded.integrity_ok`,[agentSlug,p.t,blockNumber,p.usd,p.sol,p.flow??0,JSON.stringify(balances),p.unpriced??[],integrityOk]);
   }
   async integrityDrifted(agent:string):Promise<boolean> {return (await this.q.query<{drifted:boolean}>('select drifted from monad.agent_integrity where agent_slug=$1',[agent]))[0]?.drifted??false;}
   async setIntegrityDrift(agent:string,drifted:boolean,differences:Record<string,{replayed:string;chain:string}>,now=Date.now()):Promise<void> {
-    await this.q.query(`insert into monad.agent_integrity(agent_slug,drifted,differences,updated_ms) values($1,$2,$3::jsonb,$4)
+    await this.q.query(`insert into monad.agent_integrity(agent_slug,drifted,differences,updated_ms) values($1,$2,$3::text::jsonb,$4)
       on conflict(agent_slug) do update set drifted=excluded.drifted,differences=excluded.differences,updated_ms=excluded.updated_ms`,[agent,drifted,JSON.stringify(differences),now]);
   }
   async unsupportedCount(agent:string,sinceMs=0):Promise<number> { return Number((await this.q.query<{n:string}>('select count(distinct tx_hash) n from monad.ledger_entries where agent_slug=$1 and kind=\'unsupported\' and ts_ms >= $2',[agent,sinceMs]))[0]?.n??0); }
@@ -208,7 +208,7 @@ export class Store {
     for(const k of ['7d','30d','all'] as const) metrics[k]={...metrics[k],eligible:metrics[k].eligible&&unpriced.length===0&&d.agent.status==='live'&&d.agent.bondMon>0};
     const result={equityUsd:row.equityUsd,tier:row.tier,metrics,spark:row.spark,unsupportedCount:unsupported,unpriced,eligible};
     await this.q.query(`insert into monad.agent_stats(agent_slug,updated_ms,equity_usd,tier,metrics,spark,unsupported_count,unpriced,eligible)
-      values($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9) on conflict(agent_slug) do update set updated_ms=excluded.updated_ms,equity_usd=excluded.equity_usd,tier=excluded.tier,metrics=excluded.metrics,spark=excluded.spark,unsupported_count=excluded.unsupported_count,unpriced=excluded.unpriced,eligible=excluded.eligible`,[agentSlug,now,result.equityUsd,result.tier,JSON.stringify(metrics),JSON.stringify(result.spark),unsupported,unpriced,eligible]);
+      values($1,$2,$3,$4,$5::text::jsonb,$6::text::jsonb,$7,$8,$9) on conflict(agent_slug) do update set updated_ms=excluded.updated_ms,equity_usd=excluded.equity_usd,tier=excluded.tier,metrics=excluded.metrics,spark=excluded.spark,unsupported_count=excluded.unsupported_count,unpriced=excluded.unpriced,eligible=excluded.eligible`,[agentSlug,now,result.equityUsd,result.tier,JSON.stringify(metrics),JSON.stringify(result.spark),unsupported,unpriced,eligible]);
     return result;
   }
   async leaderboard(now:number,staleAfterMs=3_600_000):Promise<LeaderboardRow[]> {
@@ -217,8 +217,8 @@ export class Store {
   }
   async statsCount():Promise<{agents:number;trades:number}> { const r=(await this.q.query<{agents:string;trades:string}>('select (select count(*) from monad.agents) agents,(select count(*) from monad.interactions) trades'))[0];return {agents:num(r.agents),trades:num(r.trades)}; }
 
-  async insertPost(p:Post):Promise<void> { await this.q.query('insert into monad.posts(id,agent_slug,ts_ms,type,data) values($1,$2,$3,$4,$5::jsonb)',[p.id,p.agentSlug,p.ts, p.type,JSON.stringify(p)]); }
-  async insertCall(c:Call):Promise<void> { await this.q.query('insert into monad.calls(id,agent_slug,ts_ms,expires_ms,data) values($1,$2,$3,$4,$5::jsonb)',[c.id,c.agentSlug,c.createdAt,c.expiresAt,JSON.stringify(c)]); }
+  async insertPost(p:Post):Promise<void> { await this.q.query('insert into monad.posts(id,agent_slug,ts_ms,type,data) values($1,$2,$3,$4,$5::text::jsonb)',[p.id,p.agentSlug,p.ts, p.type,JSON.stringify(p)]); }
+  async insertCall(c:Call):Promise<void> { await this.q.query('insert into monad.calls(id,agent_slug,ts_ms,expires_ms,data) values($1,$2,$3,$4,$5::text::jsonb)',[c.id,c.agentSlug,c.createdAt,c.expiresAt,JSON.stringify(c)]); }
   async callById(id:string):Promise<Call|undefined> { return (await this.q.query<{data:Call}>('select data from monad.calls where id=$1',[id]))[0]?.data; }
   async calls(agent?:string):Promise<Call[]> { return (await this.q.query<{data:Call}>(`select data from monad.calls ${agent?'where agent_slug=$1':''} order by ts_ms desc,id desc`,agent?[agent]:[])).map(r=>r.data); }
   async feed(o:{filter:'all'|'calls'|'trades'|'thesis';agent?:string;limit:number}):Promise<PostView[]> {

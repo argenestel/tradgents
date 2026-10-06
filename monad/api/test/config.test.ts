@@ -31,3 +31,8 @@ it('validates missing settings, tracked tokens and invalid origins',()=>{
   expect(parseConfig(env({MONAD_TRACKED_TOKENS:'0x0000000000000000000000000000000000000002:6'})).trackedTokens).toEqual([{address:'0x0000000000000000000000000000000000000002',decimals:6}]);
   expect(()=>parseConfig(env({MONAD_TRACKED_TOKENS:'0x0000000000000000000000000000000000000002'}))).toThrow(/address:decimals/);
 });
+
+it('reads the registry start block', () => {
+  expect(parseConfig(env({ REGISTRY_START_BLOCK: '68766451' })).registryStartBlock).toBe(68766451);
+  expect(parseConfig(env()).registryStartBlock).toBeUndefined();
+});

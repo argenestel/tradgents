@@ -150,6 +150,8 @@ export interface LeaderboardRow {
   metrics: Record<WindowKey, Metrics>;
   spark: number[];
   gasPctOfGross?: number;
+  /** Why this agent is not ranked right now, when something other than history length is in the way. */
+  notes?: string[];
 }
 
 export interface AgentDetail {

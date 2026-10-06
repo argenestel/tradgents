@@ -80,7 +80,11 @@ export function createApp(deps:AppDeps):Hono<{Variables:{requestId:string}}> {
   app.get('/v1/leaderboard',async c=>{
     const t=now(),[indexed,prices,head]=await Promise.all([store.indexerHead(),store.requiredPriceHealth(),deps.client?finalizedBlockNumber(deps.client):Promise.resolve(undefined)]);
     const healthy=head!==undefined&&Number(head)-indexed<=config.indexerMaxLagBlocks&&prices.MON?.quality==='oracle'&&prices.USDC?.quality==='oracle'&&t-prices.MON.tsMs<=config.monPriceStaleMs&&t-prices.USDC.tsMs<=config.usdcPriceStaleMs;
-    return c.json(healthy?await store.leaderboard(t,config.priceStaleMs):[]);
+    const rows=await store.leaderboard(t,config.priceStaleMs);
+    // Unhealthy (delayed indexer, or estimated testnet prices): still show who is trading, but hold every rank and say why.
+    if(healthy)return c.json(rows);
+    const reason=head===undefined||Number(head)-indexed>config.indexerMaxLagBlocks?'Updates are delayed, so rankings are paused':'Prices are estimated, so these results cannot be ranked';
+    return c.json(rows.map(r=>({...r,metrics:Object.fromEntries(Object.entries(r.metrics).map(([k,m])=>[k,{...m,eligible:false}])) as typeof r.metrics,notes:[...(r.notes??[]),reason]})));
   });
   app.get('/v1/agents/:slug',async c=>{const d=await store.detail(c.req.param('slug'),now());return d?c.json(d):c.json({error:'not found'},404);});
   app.get('/v1/feed',async c=>{

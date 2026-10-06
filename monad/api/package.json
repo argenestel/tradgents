@@ -17,6 +17,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@hono/node-server": "^1.19.6",
+    "@vercel/functions": "^3.9.11",
     "hono": "^4.10.6",
     "pino": "^9.14.0",
     "postgres": "^3.4.9",
@@ -25,12 +26,15 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
   "packageManager": "pnpm@11.1.2",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

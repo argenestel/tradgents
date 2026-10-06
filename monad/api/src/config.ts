@@ -24,6 +24,10 @@ const envSchema = z.object({
   SENTRY_DSN: z.string().url().optional(),
   INDEXER_POLL_MS: z.coerce.number().int().min(300).default(1000),
   INDEXER_MAX_LAG_BLOCKS: z.coerce.number().int().positive().default(1200),
+  /** The block the registry was deployed in. The registry scan starts here; without it a fresh database starts at the chain head and misses earlier registrations. */
+  REGISTRY_START_BLOCK: z.coerce.number().int().min(0).optional(),
+  /** Widest eth_getLogs block range the RPC accepts. Monad's public testnet RPC allows 100. */
+  LOG_RANGE_BLOCKS: z.coerce.number().int().min(1).max(10_000).default(100),
   PRICE_STALE_MS: z.coerce.number().int().positive().default(3_600_000),
   MONAD_PRICE_STALE_MS: z.coerce.number().int().positive().optional(),
   USDC_PRICE_STALE_MS: z.coerce.number().int().positive().optional(),
@@ -47,6 +51,8 @@ export interface Config {
   sentryDsn?: string;
   indexerPollMs: number;
   indexerMaxLagBlocks: number;
+  registryStartBlock?: number;
+  logRangeBlocks: number;
   priceStaleMs: number;
   monPriceStaleMs: number;
   usdcPriceStaleMs: number;
@@ -89,7 +95,7 @@ export function parseConfig(env: NodeJS.ProcessEnv | Record<string, string | und
     registryAddress: v.REGISTRY_ADDRESS, databaseUrl: v.DATABASE_URL, databaseUrlDirect: v.DATABASE_URL_DIRECT, corsOrigins,
     ...(v.API_URL ? { apiUrl: v.API_URL } : {}), port: v.PORT, host: v.HOST, logLevel: v.LOG_LEVEL,
     ...(v.SENTRY_DSN ? { sentryDsn: v.SENTRY_DSN } : {}), indexerPollMs: v.INDEXER_POLL_MS,
-    indexerMaxLagBlocks: v.INDEXER_MAX_LAG_BLOCKS, priceStaleMs: v.PRICE_STALE_MS,
+    indexerMaxLagBlocks: v.INDEXER_MAX_LAG_BLOCKS, ...(v.REGISTRY_START_BLOCK !== undefined ? { registryStartBlock: v.REGISTRY_START_BLOCK } : {}), logRangeBlocks: v.LOG_RANGE_BLOCKS, priceStaleMs: v.PRICE_STALE_MS,
     monPriceStaleMs: v.MONAD_PRICE_STALE_MS ?? v.PRICE_STALE_MS,
     usdcPriceStaleMs: v.USDC_PRICE_STALE_MS ?? v.PRICE_STALE_MS, minLiquidityUsd: v.MIN_LIQUIDITY_USD,
     monadPriceFeedId: profile.feeds.mon, usdcPriceFeedId: profile.feeds.usdc,

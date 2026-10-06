@@ -45,12 +45,19 @@ export function parsePolicy(input: unknown, env: Record<string, string | undefin
   matchesProfile(policy, profile);
   return policy;
 }
+/**
+ * Mainnet requires a root-owned policy. A testnet demo without root may set TRADGENTS_TESTNET_USER_POLICY=1 to accept a policy owned by
+ * the signer's own user instead; this never applies to the mainnet profile.
+ */
+export function policyOwnerUid(network: string, env: Record<string, string | undefined>, signerUid: number): number {
+  return network === 'testnet' && env.TRADGENTS_TESTNET_USER_POLICY === '1' ? signerUid : 0;
+}
 export function assertRootOwnedPolicyFile(path: string, ownerUid = 0): void {
   const st = lstatSync(path); if (st.isSymbolicLink() || !st.isFile()) throw new Error('policy must be a regular file');
   if (st.uid !== ownerUid) throw new Error(`policy file must be owned by uid ${ownerUid}`);
   if ((st.mode & 0o137) !== 0) throw new Error('policy file permissions must be no looser than 0640 and must not be world-readable');
 }
-export function loadPolicy(path: string, env: Record<string, string | undefined> = process.env): SignerPolicy {
-  assertRootOwnedPolicyFile(path, 0);
+export function loadPolicy(path: string, env: Record<string, string | undefined> = process.env, ownerUid = 0): SignerPolicy {
+  assertRootOwnedPolicyFile(path, ownerUid);
   return parsePolicy(JSON.parse(readFileSync(path, 'utf8')), env);
 }

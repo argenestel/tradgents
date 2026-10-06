@@ -7,7 +7,7 @@ import { createPublicClient,createWalletClient,defineChain,http,isAddress,type A
 import { privateKeyToAccount } from 'viem/accounts';
 import { z } from 'zod';
 import { assertPrivateDirectory,SpendLedger } from './spend-ledger.ts';
-import { assertRootOwnedPolicyFile,loadPolicy } from './policy.ts';
+import { assertRootOwnedPolicyFile,loadPolicy,policyOwnerUid } from './policy.ts';
 import { signTradgentsMessage } from './signed-messages.ts';
 import { executeSwap } from './trade.ts';
 import { getSignerNetworkProfile,type SignerNetworkProfile } from './venue.ts';
@@ -65,9 +65,10 @@ export async function startSigner(env:NodeJS.ProcessEnv=process.env):Promise<()=
   if(e.TESTNET_FIXED_PRICES==='true'&&(profile.network!=='testnet'||e.TESTNET_MON_PRICE_USD===undefined))throw new Error('TESTNET_FIXED_PRICES is testnet-only and requires TESTNET_MON_PRICE_USD');
   const rpcUrl=e.MONAD_RPC_URL??profile.defaultRpcUrl;
   const dir=resolve(e.SIGNER_DIR),policyPath=resolve(e.SIGNER_POLICY_FILE),keyPath=resolve(e.SIGNER_KEY_FILE),socketPath=resolve(e.TRADGENTS_SIGNER_SOCKET??join(dir,'signer.sock'));
-  assertPrivateDirectory(dir,uid());assertRootOwnedPolicyFile(policyPath,0);assertSecretFile(keyPath);
+  const policyUid=policyOwnerUid(profile.network,env,uid());
+  assertPrivateDirectory(dir,uid());assertRootOwnedPolicyFile(policyPath,policyUid);assertSecretFile(keyPath);
   assertSocketMode(e.TRADGENTS_SIGNER_SOCKET_MODE,e.TRADGENTS_SIGNER_SOCKET_GID);
-  const policy=loadPolicy(policyPath,env);
+  const policy=loadPolicy(policyPath,env,policyUid);
   if(policy.network!==profile.network||policy.chainId!==profile.chainId||policy.registryAddress.toLowerCase()!==e.REGISTRY_ADDRESS.toLowerCase())throw new Error('policy and signer profile/registry settings do not match');
   const rawKey=readFileSync(keyPath,'utf8').trim();if(!/^0x[0-9a-fA-F]{64}$/.test(rawKey))throw new Error('signer key file must contain a 32-byte 0x-prefixed key');
   const account=privateKeyToAccount(rawKey as `0x${string}`);

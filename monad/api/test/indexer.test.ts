@@ -44,7 +44,7 @@ it('stores finalized registry history from its own cursor before any agent exist
     readContract:async(args:{functionName:string;args?:readonly unknown[]})=>args.functionName==='getPriceUnsafe'?{price:args.args?.[0]===cfg.monadPriceFeedId?100n:1n,conf:0n,expo:0,publishTime:1_700_000_000n}:0n,
     request:async()=>[],
   } as unknown as PublicClient;
-  const indexer=new Indexer(db,client,cfg);await indexer.backfill(1_700_000_000_000);
+  const indexer=new Indexer(db,client,{...cfg,registryStartBlock:0});await indexer.backfill(1_700_000_000_000);
   const store=new Store(db),indexed=await store.agentByWallet(wallet);
   expect(indexed?.bondMon).toBe(1);expect(await store.state('registry_block')).toBe('2');expect(await store.indexerHead()).toBe(2);
   expect(await db.query('select tx_hash from monad.raw_logs where address=$1',[registry])).toHaveLength(1);await db.close();
@@ -84,4 +84,11 @@ it('advances only finalized cursors and keeps registry event writes within each 
   const indexer=new Indexer(db,client,cfg);const result=await indexer.backfill(2000);
   expect(result).toMatchObject({from:10,to:11,applied:0});expect(await store.indexerHead()).toBe(11);
   await db.close();
+});
+
+it('does not scan the registry from genesis when no start block is configured: it begins at the chain head',async()=>{
+  const db=await openDb('memory:');await migrate(db);const ranges:Array<[bigint,bigint]>=[];
+  const client={getBlock:async()=>({number:900_000n,hash:'0x1',timestamp:1n,transactions:[]}),getLogs:async(a:{fromBlock:bigint;toBlock:bigint})=>{ranges.push([a.fromBlock,a.toBlock]);return [];},request:async()=>[],readContract:async()=>0n} as unknown as PublicClient;
+  await new Indexer(db,client,cfg).backfill(1_700_000_000_000);
+  expect(ranges.every(([from])=>from>=900_000n)).toBe(true);await db.close();
 });
