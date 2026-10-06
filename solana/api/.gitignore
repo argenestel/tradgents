@@ -6,3 +6,5 @@ node_modules/
 .local/
 .pnpm-store/
 .cache-tools/
+.vercel
+.env*

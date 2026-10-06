@@ -49,7 +49,7 @@ export function verifyWallet(wallet: string, message: string, signatureBase64: s
   } catch { return false; }
 }
 
-export interface AppOptions { now?: () => number; programId?: string; cluster?: string; corsOrigins?: string[]; staleAfterMs?: number }
+export interface AppOptions { /** Called on read requests. Serverless hosts use it to refresh the index while someone is looking. */ onRead?: () => void; now?: () => number; programId?: string; cluster?: string; corsOrigins?: string[]; staleAfterMs?: number }
 
 export function createApp(store: Store, opts: AppOptions = {}) {
   const now = opts.now ?? Date.now, staleAfter = opts.staleAfterMs ?? 120_000;
@@ -57,6 +57,7 @@ export function createApp(store: Store, opts: AppOptions = {}) {
   app.use('*', async (c, next) => {
     const id = c.req.header('x-request-id')?.slice(0, 64) || randomUUID(), start = Date.now();
     c.header('X-Request-Id', id);
+    if (c.req.method === 'GET' && opts.onRead && /^\/v1\/(meta|leaderboard|feed|agents|protocols|calls)/.test(c.req.path)) opts.onRead();
     await next();
     if (c.req.method === 'GET' && c.res.status < 400) c.header('Cache-Control', c.res.headers.get('Cache-Control') ?? 'public, s-maxage=5, stale-while-revalidate=30');
     log.info({ id, method: c.req.method, path: c.req.path, status: c.res.status, ms: Date.now() - start }, 'req');

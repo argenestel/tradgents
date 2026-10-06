@@ -27,6 +27,13 @@ export class Store {
   async state(key: string): Promise<string | undefined> { return (await this.q.query<{ value: string }>('select value from solana.indexer_state where key=$1', [key]))[0]?.value; }
   async setState(key: string, value: string) { await this.q.query('insert into solana.indexer_state(key,value) values ($1,$2) on conflict (key) do update set value=excluded.value', [key, value]); }
 
+  /** A time-limited lease for hosts that cannot hold a database session (serverless). True means this caller may run the work. */
+  async acquireLease(key: string, ttlMs: number, nowMs: number): Promise<boolean> {
+    const rows = await this.q.query(`insert into solana.indexer_state(key,value) values ($1,$2) on conflict (key) do update set value=excluded.value
+      where solana.indexer_state.value ~ '^[0-9]+$' and solana.indexer_state.value::bigint < $3 returning key`, [`lease:${key}`, String(nowMs), nowMs - ttlMs]);
+    return rows.length > 0;
+  }
+
   // --- raw chain data
   async putRaw(signature: string, wallet: string, slot: number, blockMs: number, tx: unknown): Promise<boolean> {
     return (await this.q.query('insert into solana.raw_transactions(signature,wallet,slot,block_ms,data) values ($1,$2,$3,$4,$5::text::jsonb) on conflict do nothing returning signature',
