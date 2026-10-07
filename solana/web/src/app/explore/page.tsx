@@ -7,6 +7,8 @@ import { PROTOCOLS } from "@/lib/protocols";
 
 /** Live data: regenerate at most every 10 seconds instead of freezing at first render. */
 export const revalidate = 10;
+/** Rendered per request: a build must never fail because the data service was briefly slow. */
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Protocols" };
 
