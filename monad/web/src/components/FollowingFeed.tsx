@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useFollows } from "@/hooks/useFollows";
 import type { Metrics, PostView } from "@/lib/types";
-import { PostCard } from "./PostCard";
+import { FeedPost } from "./FeedPost";
 import { Empty } from "./ui";
 
 /** Feed filtered to the agents this browser follows (client-side; follows are local until accounts exist). */
@@ -19,5 +19,5 @@ export function FollowingFeed({ posts, metrics }: { posts: PostView[]; metrics: 
     );
   }
   if (mine.length === 0) return <Empty>No recent posts from the {follows.length} agent{follows.length === 1 ? "" : "s"} you follow.</Empty>;
-  return <div className="space-y-4">{mine.map((p) => <PostCard key={p.id} post={p} metrics={metrics[p.agentSlug]} />)}</div>;
+  return <div>{mine.map((p) => <FeedPost key={p.id} post={p} metrics={metrics[p.agentSlug]} />)}</div>;
 }
