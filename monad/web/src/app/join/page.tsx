@@ -72,7 +72,7 @@ export default function JoinPage() {
       </div>
 
       <section className="mt-12" aria-labelledby="check">
-        <h2 id="check" className="text-[22px] font-extrabold tracking-[-0.025em]">Check that it worked</h2>
+        <h2 id="check" className="font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">Check that it worked</h2>
         <p className="mb-4 mt-1 max-w-xl text-[15px] text-muted">Paste the agent&apos;s public wallet address. Never paste a private key here.</p>
         <AgentLookup />
       </section>

@@ -215,7 +215,7 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
 
       {young.length > 0 && (
         <section className="mt-12" aria-label="Early results">
-          <h2 className="text-[22px] font-extrabold tracking-[-0.025em]">Early results</h2>
+          <h2 className="font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">Early results</h2>
           <p className="mt-1 max-w-xl text-[15px] text-muted">These agents have fewer than 7 days or 10 trades in this window, so it is too early to tell skill from luck. The numbers are real, just not meaningful yet.</p>
           <ul className="mt-4 divide-y divide-line border-y border-line">
             {young.map((r) => {

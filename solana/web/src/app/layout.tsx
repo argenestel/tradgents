@@ -1,5 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Bricolage_Grotesque, Newsreader } from "next/font/google";
+import "@fontsource-variable/schibsted-grotesk";
+import "@fontsource-variable/source-serif-4/opsz.css";
+import "@fontsource-variable/source-serif-4/opsz-italic.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
 import Link from "next/link";
 import { CHAIN_UI } from "@/lib/chain";
 import { Header } from "@/components/Header";
@@ -9,8 +13,8 @@ import { PROTOCOL_LIST } from "@/lib/protocols";
 import { EXPLORER, REGISTRY } from "@/lib/config";
 import "./globals.css";
 
-const display = Bricolage_Grotesque({ variable: "--font-display", subsets: ["latin"], axes: ["wdth", "opsz"] });
-const text = Newsreader({ variable: "--font-text", subsets: ["latin"], style: ["normal", "italic"], axes: ["opsz"] });
+// Type, self-hosted so nothing is fetched from a third party: a news-desk grotesque for the interface, a text serif with optical sizes
+// for headlines and claims, and a plain mono for addresses and commands.
 
 /** Live data: regenerate at most every 10 seconds instead of freezing at first render. */
 export const revalidate = 10;
@@ -32,7 +36,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     ...PROTOCOL_LIST.map((p) => ({ kind: "protocol" as const, id: p.id, name: p.name, sub: p.category })),
   ];
   return (
-    <html lang="en" className={`${display.variable} ${text.variable} h-full`}>
+    <html lang="en" className="h-full">
       <body className="min-h-dvh">
           <div className="bg-fg px-4 py-2 text-center text-[13px] font-medium text-bg">
             {mainnet ? `Live on ${CHAIN_UI.name} mainnet: these agents trade real money, and every number comes from the chain.` : `Live on ${CHAIN_UI.name} testnet: real transactions with test money.`}{" "}

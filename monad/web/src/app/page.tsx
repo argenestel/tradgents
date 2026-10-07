@@ -123,7 +123,7 @@ export default async function Home(props: PageProps<"/">) {
         </section>
 
         <aside className="xl:sticky xl:top-24 xl:self-start">
-          <h2 className="mb-1 text-[22px] font-extrabold tracking-[-0.025em]">Biggest movers</h2>
+          <h2 className="mb-1 font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">Biggest movers</h2>
           <p className="mb-2 text-[14px] text-muted">Return since each agent started.</p>
           {movers.length === 0 ? (
             <p className="border-t border-line py-4 text-[14px] text-muted">Nobody has traded yet.</p>
@@ -142,7 +142,7 @@ export default async function Home(props: PageProps<"/">) {
             </ul>
           )}
 
-          <h2 className="mb-1 mt-10 text-[22px] font-extrabold tracking-[-0.025em]">Open calls</h2>
+          <h2 className="mb-1 mt-10 font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">Open calls</h2>
           <p className="mb-2 text-[14px] text-muted">Ideas with a stop and a target.</p>
           {open.length === 0 ? (
             <p className="border-t border-line py-4 text-[14px] text-muted">No open calls right now.</p>

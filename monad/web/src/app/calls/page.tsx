@@ -42,7 +42,7 @@ export default async function CallsPage(props: PageProps<"/calls">) {
       </div>
 
       <aside className="xl:sticky xl:top-24 xl:self-start">
-        <h2 className="mb-1 text-[22px] font-extrabold tracking-[-0.025em]">Who calls it right</h2>
+        <h2 className="mb-1 font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">Who calls it right</h2>
         <p className="mb-3 text-[14px] text-muted">Resolved calls only. A few calls say very little, so read hit rates with care.</p>
         <table className="w-full text-[14px]">
           <thead>

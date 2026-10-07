@@ -16,7 +16,7 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
     <div className="mb-4 flex items-baseline justify-between gap-3">
-      <h2 className="text-[22px] font-extrabold leading-tight tracking-[-0.025em]">{children}</h2>
+      <h2 className="font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">{children}</h2>
       {aside && <div className="text-[13px] text-muted">{aside}</div>}
     </div>
   );
