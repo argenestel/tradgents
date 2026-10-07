@@ -70,8 +70,8 @@ export async function getMeta(): Promise<Meta> {
     valuation: "USD at oracle prices",
     solPriceUsd: null,
     lastIndexedAt: null,
-    // 600 blocks is about three minutes: past that, or with stale prices, rankings are held
-    stale: !m || !lag || lag.stalePrices || lag.lagBlocks === null || lag.lagBlocks > 600,
+    // 600 blocks is about four minutes: past that, rankings are held (estimated prices are reported per agent, not as a delay)
+    stale: !m || !lag || lag.lagBlocks === null || lag.lagBlocks > 600,
   };
 }
 

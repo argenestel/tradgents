@@ -29,6 +29,8 @@ const RegisterBody=z.object({
 const PostBody=z.object({agentWallet:addr,text:z.string().max(4000),type:z.enum(['thesis','milestone']).default('thesis'),nonce:uint,deadline:uint,signature}).strict();
 const CallBody=z.object({agentWallet:addr,market:z.string().min(1).max(64),direction:z.enum(['long','short']),entry:z.number().positive().finite(),target:z.number().positive().finite(),stop:z.number().positive().finite(),expiresAt:z.number().int().positive(),rationale:z.string().max(4000),nonce:uint,deadline:uint,signature}).strict();
 
+/** A read endpoint must not hang on a slow RPC: give the chain a few seconds, then report it as unknown. */
+const soft=<T>(p:Promise<T>,ms=4000):Promise<T|undefined>=>Promise.race([p.catch(()=>undefined),new Promise<undefined>(r=>setTimeout(()=>r(undefined),ms))]);
 export interface AppDeps { db:Db;config:Config;client?:PublicClient;now?:()=>number;logger?:Logger;snapshot?:(wallet:Address,now:number)=>Promise<Awaited<ReturnType<typeof snapshotWallet>>> }
 const MAX_BODY=16*1024, MAX_DEADLINE_SECONDS=15*60;
 async function jsonBody(c:{req:{raw:Request}},max=MAX_BODY):Promise<unknown> {
@@ -67,18 +69,18 @@ export function createApp(deps:AppDeps):Hono<{Variables:{requestId:string}}> {
   app.get('/v1/health',async c=>{
     let dbOk=false,indexerLagBlocks:number|null=null,chainHead:number|null=null;
     try{await deps.db.query('select 1');dbOk=true;}catch{}
-    try{const indexed=await store.indexerHead();chainHead=deps.client?Number(await finalizedBlockNumber(deps.client)):null;indexerLagBlocks=chainHead===null?null:Math.max(0,chainHead-indexed);}catch{}
+    try{const indexed=await store.indexerHead();const fin=deps.client?await soft(finalizedBlockNumber(deps.client)):undefined;chainHead=fin===undefined?null:Number(fin);indexerLagBlocks=chainHead===null?null:Math.max(0,chainHead-indexed);}catch{}
     const ok=dbOk&&indexerLagBlocks!==null&&indexerLagBlocks<=config.indexerMaxLagBlocks;
     return c.json({ok,network:config.network,displayName:config.profile.displayName,chainId:config.chainId,registry:config.registryAddress,indexerHead:await store.indexerHead().catch(()=>0),indexerLagBlocks,db:dbOk?'ok':'error',indexer:ok?'ok':'lagging'},ok?200:503);
   });
   app.get('/v1/meta',async c=>{
-    const [counts,indexed,priceHealth,head,safe]=await Promise.all([store.statsCount(),store.indexerHead(),store.requiredPriceHealth(),deps.client?finalizedBlockNumber(deps.client):Promise.resolve(undefined),deps.client?safeBlockNumber(deps.client):Promise.resolve(undefined)]);
+    const [counts,indexed,priceHealth,head,safe]=await Promise.all([store.statsCount(),store.indexerHead(),store.requiredPriceHealth(),deps.client?soft(finalizedBlockNumber(deps.client)):Promise.resolve(undefined),deps.client?soft(safeBlockNumber(deps.client)):Promise.resolve(undefined)]);
     const lag=head===undefined?null:Math.max(0,Number(head)-indexed),pricesHealthy=priceHealth.MON?.quality==='oracle'&&priceHealth.USDC?.quality==='oracle'&&now()-priceHealth.MON.tsMs<=config.monPriceStaleMs&&now()-priceHealth.USDC.tsMs<=config.usdcPriceStaleMs;
     const source=(token:'MON'|'USDC')=>({token,id:priceHealth[token]?.source??'pyth-monad-onchain',quality:priceHealth[token]?.quality??'estimated-or-stale',feedId:token==='MON'?config.monadPriceFeedId:config.usdcPriceFeedId});
     return c.json({network:config.network,displayName:config.profile.displayName,explorerBaseUrl:config.profile.explorerBaseUrl,chainId:config.chainId,registry:config.registryAddress,priceSources:[source('MON'),source('USDC')],...(config.testnetFixedPrices?{fixedPriceFallback:{enabled:true,quality:'estimated',description:`TESTNET_FIXED_PRICES is enabled; MON/USD uses TESTNET_MON_PRICE_USD ($${config.testnetMonPriceUsd}), USDC/USD is fixed at $1.00. This is a testnet estimate, not an oracle mark.`}}:{}),indexerLag:{indexedFinalizedBlock:indexed,finalizedBlock:head===undefined?null:Number(head),safeBlock:safe===undefined?null:Number(safe),unconfirmedBlocks:safe===undefined?null:Math.max(0,Number(safe)-indexed),lagBlocks:lag,stalePrices:!pricesHealthy},counts});
   });
   app.get('/v1/leaderboard',async c=>{
-    const t=now(),[indexed,prices,head]=await Promise.all([store.indexerHead(),store.requiredPriceHealth(),deps.client?finalizedBlockNumber(deps.client):Promise.resolve(undefined)]);
+    const t=now(),[indexed,prices,head]=await Promise.all([store.indexerHead(),store.requiredPriceHealth(),deps.client?soft(finalizedBlockNumber(deps.client)):Promise.resolve(undefined)]);
     const healthy=head!==undefined&&Number(head)-indexed<=config.indexerMaxLagBlocks&&prices.MON?.quality==='oracle'&&prices.USDC?.quality==='oracle'&&t-prices.MON.tsMs<=config.monPriceStaleMs&&t-prices.USDC.tsMs<=config.usdcPriceStaleMs;
     const rows=await store.leaderboard(t,config.priceStaleMs);
     // Unhealthy (delayed indexer, or estimated testnet prices): still show who is trading, but hold every rank and say why.

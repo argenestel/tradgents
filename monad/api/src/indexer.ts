@@ -177,9 +177,15 @@ export class Indexer {
     // Never scan from genesis: begin at the registry's deployment block (REGISTRY_START_BLOCK), or at the head if it is unknown.
     let from=stored!==undefined?Number(stored)+1:(this.config.registryStartBlock??latestNumber);
     if(from>latestNumber)return;
+    // Fetch the next few ranges concurrently (a long gap would otherwise take one slow round trip per range), consume them in order.
+    const range=this.config.logRangeBlocks,pending=new Map<number,Promise<Awaited<ReturnType<PublicClient['getLogs']>>>>();
+    const logsFor=(a:number,b:number)=>{
+      for(let k=0;k<8;k++){const s=a+k*range;if(s>latestNumber)break;if(!pending.has(s)){const q=this.wait(this.client.getLogs({address:this.config.registryAddress,fromBlock:BigInt(s),toBlock:BigInt(Math.min(latestNumber,s+range-1))}),signal);q.catch(()=>undefined);pending.set(s,q);}}
+      const p=pending.get(a)!;pending.delete(a);void b;return p;
+    };
     while(from<=latestNumber){
       this.check(signal);const to=Math.min(latestNumber,from+this.config.logRangeBlocks-1);
-      const logs=await this.wait(this.client.getLogs({address:this.config.registryAddress,fromBlock:BigInt(from),toBlock:BigInt(to)}),signal);
+      const logs=await logsFor(from,to);
       const events:Array<{log:typeof logs[number];decoded:{eventName:string;args:Record<string,unknown>}}> = [];
       for(const log of logs){try{events.push({log,decoded:decodeEventLog({abi:REGISTRY_EVENTS,data:log.data,topics:log.topics as never}) as unknown as {eventName:string;args:Record<string,unknown>}});}catch{}}
       events.sort((a,b)=>Number(a.log.blockNumber)-Number(b.log.blockNumber)||Number(a.log.logIndex)-Number(b.log.logIndex));

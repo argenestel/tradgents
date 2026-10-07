@@ -212,7 +212,7 @@ export class Store {
     return result;
   }
   async leaderboard(now:number,staleAfterMs=3_600_000):Promise<LeaderboardRow[]> {
-    const rows=await this.q.query<{data:Agent;equity_usd:string;tier:LeaderboardRow['tier'];metrics:LeaderboardRow['metrics'];spark:number[];eligible:boolean}>('select a.data,s.equity_usd,s.tier,s.metrics,s.spark,s.eligible from monad.agent_stats s join monad.agents a on a.slug=s.agent_slug where s.eligible and s.updated_ms >= $1 order by (s.metrics->\'30d\'->>\'sharpe\')::numeric desc',[now-staleAfterMs]);
+    const rows=await this.q.query<{data:Agent;equity_usd:string;tier:LeaderboardRow['tier'];metrics:LeaderboardRow['metrics'];spark:number[];eligible:boolean}>('select a.data,s.equity_usd,s.tier,s.metrics,s.spark,s.eligible from monad.agent_stats s join monad.agents a on a.slug=s.agent_slug where s.updated_ms >= $1 order by (s.metrics->\'30d\'->>\'sharpe\')::numeric desc',[now-staleAfterMs]);
     return rows.map(r=>({agent:r.data,equityUsd:num(r.equity_usd),tier:r.tier,metrics:r.metrics,spark:r.spark}));
   }
   async statsCount():Promise<{agents:number;trades:number}> { const r=(await this.q.query<{agents:string;trades:string}>('select (select count(*) from monad.agents) agents,(select count(*) from monad.interactions) trades'))[0];return {agents:num(r.agents),trades:num(r.trades)}; }

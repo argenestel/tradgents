@@ -43,7 +43,7 @@ const tokenMeta=(token:TokenId,decimals?:number)=>{
   return {decimals:decimals??known?.decimals??18,symbol:known?token:token};
 };
 const priceAt=(samples:PriceSample[],token:TokenId,ts:number,maxAgeMs?:number)=>{const sample=nearestPrice(samples,token,ts);return sample&&(maxAgeMs===undefined||Math.abs(sample.tsMs-ts)<=maxAgeMs)?sample.usd:undefined;};
-const oraclePriceAt=(samples:PriceSample[],token:TokenId,ts:number,maxAgeMs?:number)=>{const sample=nearestPrice(samples,token,ts);return sample?.quality==='oracle'&&(maxAgeMs===undefined||Math.abs(sample.tsMs-ts)<=maxAgeMs)?sample.usd:undefined;};
+const oraclePriceAt=(samples:PriceSample[],token:TokenId,ts:number,maxAgeMs?:number,allowEstimated=false)=>{const sample=nearestPrice(samples,token,ts);return (sample?.quality==='oracle'||(allowEstimated&&sample?.quality==='estimated'))&&(maxAgeMs===undefined||Math.abs(sample.tsMs-ts)<=maxAgeMs)?sample.usd:undefined;};
 function isKnownTokenAddress(address:string,profile:NetworkProfile):boolean {
   return address.toLowerCase()===profile.wmon.toLowerCase()||address.toLowerCase()===profile.usdc.address.toLowerCase();
 }
@@ -86,6 +86,8 @@ function consumeFifo(lots:WorkingLot[],token:TokenId,qty:bigint):{cost:number;co
 
 /** Deterministic fixture/replay reducer. Raw quantities remain bigint; USD conversion occurs only at the mark edge. */
 export function replayLedger(args:{agentSlug:string;wallet:Address;opening:Record<TokenId,bigint>;openingTsMs?:number;openingLots?:FifoLot[];tokenDecimals?:Record<string,number>;transactions:TxObservation[];samples:PriceSample[];maxPriceAgeMs?:number|Record<string,number>;profile?:NetworkProfile}):ReplayResult {
+  // Testnet demo prices are fixed estimates: use them to show numbers, but they stay estimated, so agents on them are never ranked.
+  const estimatesOk=(args.profile??MAINNET_PROFILE).network==='testnet';
   const decimalsOf=(token:TokenId,fallback?:number)=>args.tokenDecimals?.[token]??fallback??tokenMeta(token).decimals;
   const maxAge=(token:TokenId)=>typeof args.maxPriceAgeMs==='number'?args.maxPriceAgeMs:args.maxPriceAgeMs?.[token];
   const balances=new Map<TokenId,bigint>(Object.entries(args.opening).map(([k,v])=>[k,BigInt(v)]));
@@ -93,7 +95,7 @@ export function replayLedger(args:{agentSlug:string;wallet:Address;opening:Recor
   const txs=[...args.transactions].sort((a,b)=>a.blockNumber-b.blockNumber||(a.transactionIndex??0)-(b.transactionIndex??0)||a.tsMs-b.tsMs||a.hash.localeCompare(b.hash));
   const openingTs=args.openingTsMs??txs[0]?.tsMs??args.samples.reduce((m,s)=>Math.min(m,s.tsMs),Number.MAX_SAFE_INTEGER);
   if(!args.openingLots?.length)for(const [token,raw] of balances){
-    const price=Number.isFinite(openingTs)?oraclePriceAt(args.samples,token,openingTs,maxAge(token)):undefined;
+    const price=Number.isFinite(openingTs)?oraclePriceAt(args.samples,token,openingTs,maxAge(token),estimatesOk):undefined;
     if(raw>0n&&price!==undefined){lots.push({token,qtyRaw:raw,costUsdMicros:usdMicrosForRaw(raw,decimalsOf(token),price),tsMs:openingTs,sourceTx:'opening'});}
   }
   for(const tx of txs){
@@ -134,13 +136,13 @@ export function replayLedger(args:{agentSlug:string;wallet:Address;opening:Recor
     if(classified.kind==='swap'&&classified.protocol){
       const negatives=[...tokenDeltas].filter(([,d])=>d.raw<0n),positives=[...tokenDeltas].filter(([,d])=>d.raw>0n);
       let outUsd=0,inUsd=0,inputQty=0,realized=0,markPriceUsd:number|undefined;const legs:Interaction['legs']=[];
-      for(const [token,d] of negatives){const qty=-d.raw,p=oraclePriceAt(args.samples,token,tx.tsMs,maxAge(token));const decimals=decimalsOf(token,d.decimals),qtyHuman=human(qty,decimals),usd=p===undefined?0:usdForRaw(qty,decimals,p);if(p===undefined)activityUnsupported=true;inUsd+=usd;inputQty+=qtyHuman;markPriceUsd??=p;const {cost,unmatched}=consumeFifo(lots,token,qty);realized-=cost;if(unmatched>0n){activityUnsupported=true;if(p!==undefined)realized-=usdForRaw(unmatched,decimals,p);}legs.push({symbol:d.symbol,delta:-qtyHuman,usd:-usd});}
-      for(const [token,d] of positives){const qty=d.raw,p=oraclePriceAt(args.samples,token,tx.tsMs,maxAge(token)),decimals=decimalsOf(token,d.decimals);const usd=p===undefined?0:usdForRaw(qty,decimals,p);if(p===undefined)activityUnsupported=true;outUsd+=usd;lots.push({token,qtyRaw:qty,costUsdMicros:p===undefined?0n:usdMicrosForRaw(qty,decimals,p),tsMs:tx.tsMs,sourceTx:tx.hash});legs.push({symbol:d.symbol,delta:human(qty,decimals),usd});}
+      for(const [token,d] of negatives){const qty=-d.raw,p=oraclePriceAt(args.samples,token,tx.tsMs,maxAge(token),estimatesOk);const decimals=decimalsOf(token,d.decimals),qtyHuman=human(qty,decimals),usd=p===undefined?0:usdForRaw(qty,decimals,p);if(p===undefined)activityUnsupported=true;inUsd+=usd;inputQty+=qtyHuman;markPriceUsd??=p;const {cost,unmatched}=consumeFifo(lots,token,qty);realized-=cost;if(unmatched>0n){activityUnsupported=true;if(p!==undefined)realized-=usdForRaw(unmatched,decimals,p);}legs.push({symbol:d.symbol,delta:-qtyHuman,usd:-usd});}
+      for(const [token,d] of positives){const qty=d.raw,p=oraclePriceAt(args.samples,token,tx.tsMs,maxAge(token),estimatesOk),decimals=decimalsOf(token,d.decimals);const usd=p===undefined?0:usdForRaw(qty,decimals,p);if(p===undefined)activityUnsupported=true;outUsd+=usd;lots.push({token,qtyRaw:qty,costUsdMicros:p===undefined?0n:usdMicrosForRaw(qty,decimals,p),tsMs:tx.tsMs,sourceTx:tx.hash});legs.push({symbol:d.symbol,delta:human(qty,decimals),usd});}
       const executionPriceUsd=inputQty>0&&outUsd>0?outUsd/inputQty:undefined;
-      const monPrice=oraclePriceAt(args.samples,'MON',tx.tsMs,maxAge('MON'));if(feeRaw>0n&&monPrice===undefined)activityUnsupported=true;const feeUsd=feeRaw&&monPrice!==undefined?human(feeRaw,18)*monPrice:0;
+      const monPrice=oraclePriceAt(args.samples,'MON',tx.tsMs,maxAge('MON'),estimatesOk);if(feeRaw>0n&&monPrice===undefined)activityUnsupported=true;const feeUsd=feeRaw&&monPrice!==undefined?human(feeRaw,18)*monPrice:0;
       const pnl=realized+outUsd-feeUsd;
       const notional=Math.min(inUsd,outUsd);
-      interactions.push({id:`${tx.hash}:0`,agentSlug:args.agentSlug,txHash:tx.hash,logIndex:0,blockNumber:tx.blockNumber,ts:tx.tsMs,protocol:classified.protocol,kind:'swap',legs,notionalUsd:notional,pnlUsd:pnl,components:[{label:'price',usd:realized+outUsd},...(feeUsd? [{label:'gas' as const,usd:-feeUsd}]:[])],execution:{slippageBps:0,private:false,mevBps:0},meta:{executionPriceUsd,...(executionPriceUsd===undefined?{}:{pair:`usd/${negatives[0]?.[0]??'token'}`}),markPriceUsd} as Interaction['meta']});
+      interactions.push({id:`${tx.hash}:0`,agentSlug:args.agentSlug,txHash:tx.hash,logIndex:0,blockNumber:tx.blockNumber,ts:tx.tsMs,protocol:classified.protocol,kind:'swap',legs,notionalUsd:notional,pnlUsd:pnl,components:[{label:'price',usd:realized+outUsd},...(feeUsd? [{label:'gas' as const,usd:-feeUsd}]:[])],execution:{slippageBps:0,private:false,mevBps:0},meta:{executionPriceUsd,...(executionPriceUsd===undefined?{}:{pair:`usd/${negatives[0]?.[0]??'token'}`}),pair:`${negatives.map(([t])=>t).join(' + ')} → ${positives.map(([t])=>t).join(' + ')}`,markPriceUsd} as Interaction['meta']});
     }
     if(activityUnsupported){
       unsupportedCount++;
