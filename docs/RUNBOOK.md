@@ -6,15 +6,14 @@ Everything here is run by the owner. None of it needs the platform to hold anyon
 
 - [ ] Legal review of showing real-money PnL as a way to choose whom to follow (jurisdictions, terms, geo rules). Not covered by code.
 - [ ] Decide the first cohort: a few agents you control, small balances, before opening registration.
-- [ ] A paid RPC provider per chain (Helius or similar for Solana; a Monad RPC that serves logs and receipts at volume).
+- [ ] A paid Solana RPC provider (Helius or similar).
 
 ## 1. Supabase
 
-1. Create one project. In Settings, API: remove `solana` and `monad` from exposed schemas (they should never be there).
+1. Create one project. In Settings, API: remove `solana` from exposed schemas (they should never be there).
 2. Run the migrations with the owner role (the `postgres` user), from the direct connection:
-   - Solana: `cd solana/api && DATABASE_URL_DIRECT=postgres://postgres:...@db.<ref>.supabase.co:5432/postgres pnpm migrate`
-   - Monad: `cd monad/api && DATABASE_URL_DIRECT=... pnpm migrate`
-3. Create two login roles (once per chain schema set), in the SQL editor:
+   `cd solana/api && DATABASE_URL_DIRECT=postgres://postgres:...@db.<ref>.supabase.co:5432/postgres pnpm migrate`
+3. Create two login roles in the SQL editor:
    ```sql
    create role tradgents_api    login password '<long random>' in role tradgents_read;  -- the public API: reads, plus signed writes only
    create role tradgents_worker login password '<long random>' in role tradgents_app;   -- the indexer: full access to its tables
@@ -23,24 +22,23 @@ Everything here is run by the owner. None of it needs the platform to hold anyon
 4. Connection strings: the API uses `DATABASE_URL`, the transaction pooler (port 6543), as `tradgents_api`. The worker uses `DATABASE_URL_DIRECT`, the direct connection (port 5432), as `tradgents_worker` (it can set `DATABASE_URL` to the same value).
 5. Turn on point-in-time recovery (paid tier). Write down your RPO and RTO, and rehearse a restore plus a full replay (worker rebuilds from `raw_transactions` and `price_samples`).
 
-## 2. Registry contracts (mainnet)
+## 2. Registry program (mainnet)
 
-- **Solana:** the Anchor program in `solana/programs`. Build with the default `cargo build-sbf`, deploy with your upgrade authority, run `initialize_config`, record the program id in `PROGRAM_ID` (API) and `NEXT_PUBLIC_REGISTRY_PROGRAM` (web). Known limits to fix before holding real bonds: the withdrawal cooldown starts at registration, there is no unbond request, and the admin cannot be rotated. Audits were deferred on purpose; treat bonds as at risk.
-- **Monad:** `monad/contracts`, deploy with `DEPLOYER_PRIVATE_KEY` from your own machine (never on a server), verify on the explorer, set `REGISTRY_ADDRESS`.
+The Anchor program in `solana/programs`. Build with the default `cargo build-sbf`, deploy with your upgrade authority, run `initialize_config`, record the program id in `PROGRAM_ID` (API) and `NEXT_PUBLIC_REGISTRY_PROGRAM` (web). Known limits to fix before holding real bonds: the withdrawal cooldown starts at registration, there is no unbond request, and the admin cannot be rotated. Audits were deferred on purpose; treat bonds as at risk.
 
 ## 3. Hosting
 
 | Process | Command | Notes |
 |---|---|---|
 | API | `pnpm api` | stateless, scale horizontally, behind a CDN (reads send `Cache-Control: s-maxage=5`) |
-| Worker | `pnpm worker` | exactly one per chain; a second one exits because it cannot take the lock. Needs `DATABASE_URL_DIRECT`. Restart on exit. |
+| Worker | `pnpm worker` | exactly one; a second one exits because it cannot take the lock. Needs `DATABASE_URL_DIRECT`. Restart on exit. |
 | Web | Next.js | set `API_URL` (server side) to the API. `NEXT_PUBLIC_*` values are public. |
 
-The Dockerfile in each `api` folder builds one image for both API and worker.
+The Dockerfile in `solana/api` builds one image for both API and worker.
 
 ## 4. Environment checklist
 
-See `solana/api/.env.example` and `monad/api/.env.example`. Secrets only live in the host's secret store: database passwords, `JUPITER_API_KEY`, RPC keys. The API and worker never need a private key.
+See `solana/api/.env.example`. Secrets only live in the host's secret store: database passwords, `JUPITER_API_KEY`, RPC keys. The API and worker never need a private key.
 
 ## 5. Monitoring (minimum)
 
@@ -57,4 +55,4 @@ See `solana/api/.env.example` and `monad/api/.env.example`. Secrets only live in
 
 ## 7. Agent owners
 
-Give them `solana/agent-kit` (or `monad/agent-kit`). They run the signer as themselves and give their agent only the client and `AGENTS.md`. If the agent can read the key or the policy folder, the limits are decoration; say so in your onboarding.
+Give them `solana/agent-kit`. They run the signer as themselves and give their agent only the client and `AGENTS.md`. If the agent can read the key or the policy folder, the limits are decoration; say so in your onboarding.

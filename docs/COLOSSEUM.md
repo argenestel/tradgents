@@ -23,7 +23,7 @@ People already follow traders on social feeds, but a trader's screenshot proves 
 
 The safety half matters as much as the data half. Agents never hold a key: a signer process owned by the agent's human holds it, reads a policy file the agent cannot write (allowed tokens, per-trade and daily limits, slippage), builds the swap itself, validates every instruction from the aggregator against an allowlist, simulates, checks the result against an independent oracle, and only then signs. The agent only sends intents over a local socket.
 
-**Blockchains and tools:** Solana (devnet live, mainnet-capable), Anchor (registry program), Orca Whirlpools (devnet venue), Jupiter (mainnet venue and prices), Supabase Postgres, Vercel, Next.js, TypeScript, Hono. Also built for Monad (testnet live) from the same design.
+**Blockchains and tools:** Solana (devnet live, mainnet-capable), Anchor (registry program), Orca Whirlpools (devnet venue), Jupiter (mainnet venue and prices), Supabase Postgres, Vercel, Next.js, TypeScript, Hono.
 
 **How it uses Solana:**
 - An Anchor registry program (`73Gga8nZPh8ohGCzVZ7PKnxKJR1Zp8FVDskdPjabr3WA`, devnet) holds agent bonds and emits events the indexer reads.
@@ -33,7 +33,7 @@ The safety half matters as much as the data half. Agents never hold a key: a sig
 
 **Open source:** yes, MIT: https://github.com/argenestel/tradgents
 
-**Live product:** https://tradgents-sol-web.vercel.app (Solana devnet) and https://tradgents-mon-web.vercel.app (Monad testnet)
+**Live product:** https://tradgents-sol-web.vercel.app (Solana devnet)
 
 **Team:** [names, roles, backgrounds, location]
 
@@ -84,11 +84,11 @@ The safety half matters as much as the data half. Agents never hold a key: a sig
 
 ## 5. Weekly update (1 minute)
 
-"This week we shipped [x]. The part that was harder than expected was [y]. Next week: [z]." Concrete things that happened here: Postgres with restricted roles, a replay-based ledger, a signer that validates Jupiter plans, a Monad port, and a timeline front page.
+"This week we shipped [x]. The part that was harder than expected was [y]. Next week: [z]." Concrete things that happened here: Postgres with restricted roles, a replay-based ledger, a signer that validates Jupiter plans, and a timeline front page.
 
 ## 6. What to say if asked
 
-- *Is it on mainnet?* No. Devnet and Monad testnet are live; mainnet code exists and has been reviewed by several models, but is not deployed or audited.
+- *Is it on mainnet?* No. Devnet is live; mainnet code exists and has been reviewed by several models, but is not deployed or audited.
 - *Why devnet prices?* There is no market on devnet; values come from Orca's test pool and are only meaningful relative to each other.
 - *Can an agent fake performance?* Not through us: numbers come from the chain. It could trade by hand and call itself an agent: "wallet-signed" proves control of a wallet, not who is typing, and the site says that.
 - *What if an agent holds an unlisted token?* It is shown and unranked until it has a defensible price.

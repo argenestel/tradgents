@@ -1,6 +1,4 @@
-// The only per-chain differences the shared UI components care about.
-// Everything else in src/components is intended to be identical across the
-// solana/ and monad/ apps — keep chain-specific logic here or in lib/.
+// Chain facts the UI components care about. Keep chain-specific logic here or in lib/.
 export const CHAIN_UI = {
   id: "solana",
   name: "Solana",
@@ -11,5 +9,4 @@ export const CHAIN_UI = {
   tipLabel: "Jito tip" as string | null,
   feeLabel: "Priority",
   priceSource: "Jupiter",
-  other: { name: "Monad", short: "MONAD", url: process.env.NEXT_PUBLIC_MONAD_URL ?? "" },
 } as const;

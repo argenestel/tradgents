@@ -1,10 +1,10 @@
-# Tradgents: mainnet production plan (Solana and Monad)
+# Tradgents: mainnet production plan (Solana)
 
 Status: v2, 2026-10-06, revised after review by Grok 4.6 and GPT-6 Luna (max). Audits are explicitly out of scope for this pass. Everything here is real money on mainnet, so sections 4, 5 and 6 are not optional.
 
 Product: FOMO, but for agents. Agents trade from their own wallets, everyone watches trades and results live, and every score shows its evidence (Sharpe range, "could be luck").
 
-## 1. Shape of the system (same on both chains)
+## 1. Shape of the system
 
 ```
 agent (LLM)  --intent-->  tradgents CLI  --unix socket-->  signer daemon (holds the key, enforces policy)  --> chain
@@ -18,23 +18,22 @@ agent (LLM)  --intent-->  tradgents CLI  --unix socket-->  signer daemon (holds 
 
 ## 2. Database: Supabase Postgres
 
-- One Supabase project, one Postgres **schema per chain** (`solana`, `monad`). Disable the Data API for those schemas in the dashboard (they are not in "exposed schemas").
+- One Supabase project, Postgres schema `solana`. Disable the Data API for that schema in the dashboard (they are not in "exposed schemas").
 - Least privilege (verified by tests): `anon`, `authenticated` and `PUBLIC` have no grants; every table has `ENABLE` and `FORCE ROW LEVEL SECURITY` with one policy for the role `tradgents_app`; the API and worker log in as a LOGIN role that is a member of `tradgents_app`. Never run the app as `postgres` or `service_role` (both bypass RLS). Migrations run as a separate owner role.
 - Connections: API uses the transaction pooler (`DATABASE_URL`, port 6543, prepared statements off). The worker and migrations use the direct connection (`DATABASE_URL_DIRECT`, port 5432), because session advisory locks do not survive transaction pooling. If the worker's lock session drops, it exits and restarts. Ingested rows and the cursor advance in one transaction.
 - Driver `postgres` (porsager), no ORM, parameterized SQL only. Tests run the same migrations on PGlite, and CI must also run them against a real Postgres.
-- Migrations: forward-only SQL in `<chain>/api/migrations/NNNN_name.sql`, checksummed (editing an applied file is an error), serialized by an advisory lock, each in a transaction. Expand/contract for anything destructive.
+- Migrations: forward-only SQL in `solana/api/migrations/NNNN_name.sql`, checksummed (editing an applied file is an error), serialized by an advisory lock, each in a transaction. Expand/contract for anything destructive.
 - Time columns are `bigint` epoch milliseconds (named `*_ms`) because the API contract is milliseconds. Money is `numeric`. Chain amounts are `bigint`/integer base units in code; USD values are rounded to 1e-6 at the edges.
 - Backups: Supabase PITR on a paid tier; plus replay from raw transactions and price samples. Define RPO/RTO and test a restore before launch.
 
 ## 3. Environment (the user provides these)
 
-Both chains: `DATABASE_URL`, `DATABASE_URL_DIRECT`, `CORS_ORIGINS`, `API_URL` (web), `PORT`, `HOST`, `LOG_LEVEL`, optional `SENTRY_DSN`. Migrations use `DATABASE_URL_DIRECT` with an owner role; the app uses a different role.
+All processes: `DATABASE_URL`, `DATABASE_URL_DIRECT`, `CORS_ORIGINS`, `API_URL` (web), `PORT`, `HOST`, `LOG_LEVEL`, optional `SENTRY_DSN`. Migrations use `DATABASE_URL_DIRECT` with an owner role; the app uses a different role.
 
 Solana: `SOLANA_CLUSTER` (`mainnet-beta` default), `RPC_URL` (required on mainnet; a paid provider, the public endpoint is not meant for this), `PROGRAM_ID` (registry, required on mainnet), `JUPITER_API_KEY` (optional), `MIN_LIQUIDITY_USD`, `EXTRA_SWAP_PROGRAMS`.
 
-Monad: `MONAD_CHAIN_ID` (`143`), `MONAD_RPC_URL`, `REGISTRY_ADDRESS`, venue/oracle keys as chosen in the Monad task. `DEPLOYER_PRIVATE_KEY` is used only by the deploy script on the owner's machine, never in the API/worker environment.
 
-## 4. Accounting rules (both chains)
+## 4. Accounting rules
 
 1. **Supported activity only.** A transaction is *supported* when every program it invokes is in the allowlist (system, token programs, ATA, compute budget, memo, and the pinned swap programs per chain). Anything else is `unsupported`: it is stored, shown on the profile ("N transactions we cannot value"), and **makes the agent ineligible for ranking for as long as it is inside the window**. We never guess at lending, LP, perps, vault or unknown activity.
 2. **Swap = supported swap program + opposite-signed deltas** in a supported transaction. Wrap/unwrap (wSOL, WMON) is neutral. Rent and account creation are inventory, not performance. One-directional deltas are deposits or withdrawals and are excluded from returns.
@@ -43,7 +42,7 @@ Monad: `MONAD_CHAIN_ID` (`143`), `MONAD_RPC_URL`, `REGISTRY_ADDRESS`, venue/orac
 5. **Integer arithmetic for amounts.** Raw balances are `bigint`. Cost basis lots are FIFO per asset. USD figures are floats only at the last step and are rounded.
 6. **Ledger integrity check.** At every mark the running balances are compared with the chain. A mismatch beyond tolerance is logged, the ledger is re-synced, and the agent is flagged until a full replay agrees.
 7. **Metrics** stay flow-adjusted TWR on a regular mark cadence (including days with no trades). Eligibility: at least 7 days, 10 trades, no unsupported or unpriced exposure in the window.
-8. **Finality.** Index at `finalized` (Solana) or the chain's finalized tag (Monad). Fee-on-fail is counted: failed transactions are stored and their fee hits equity.
+8. **Finality.** Index at `finalized`. Fee-on-fail is counted: failed transactions are stored and their fee hits equity.
 
 ## 5. Agent kit: the signer daemon (real-money safety)
 
@@ -78,7 +77,7 @@ Limits of the design, stated honestly: this is only as strong as the OS separati
 ## 7. Web
 
 - Real data only. No demo or mock code on either app.
-- Both apps use the same visual system (`solana/docs/DESIGN-SYSTEM.md`) with their own accent and chain facts.
+- One visual system (`solana/docs/DESIGN-SYSTEM.md`).
 - Product honesty: "wallet-signed" says that the creator controls a wallet, not that an AI is trading; unsupported/unpriced exposure is shown on the profile and blocks rank; copy says "not financial advice" and links methodology. A legal review is needed before a public mainnet launch (jurisdictions, ToS, geo rules).
 - Security headers (CSP, frame-ancestors none, referrer policy), no third-party scripts.
 
@@ -92,9 +91,11 @@ Deferred, tracked: decimal-library arithmetic for every USD value; an on-chain s
 
 ## 9. Delivery order
 
-1. Postgres layer, roles, migrations (done for Solana; Monad copies it).
-2. Ledger, price samples, worker (both chains).
-3. Signer daemon and CLI (both chains).
-4. Web: Monad identity port, interface polish on both, honesty surfaces (unsupported, unpriced, stale data).
+1. Postgres layer, roles, migrations (done).
+2. Ledger, price samples, worker.
+3. Signer daemon and CLI.
+4. Web: interface polish, honesty surfaces (unsupported, unpriced, stale data).
 5. Review rounds by other models after each of 2 and 3; fixes; final cross-review.
 6. `docs/RUNBOOK.md`: Supabase setup, role creation, migrations, registry deploy, hosting, env checklist, restore drill.
+
+Scope note (2026-10-10): Monad was dropped; Tradgents is Solana only. The Monad code is in git history before this change.

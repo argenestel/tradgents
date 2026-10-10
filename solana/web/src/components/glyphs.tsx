@@ -16,9 +16,6 @@ const GLYPHS: Record<string, React.ReactNode> = {
 const GLYPH_KEYS = Object.keys(GLYPHS);
 
 const PROTOCOL_GLYPH: Record<string, string> = {
-  // Monad
-  kuru: "ring", uniswap: "spark", morpho: "wings", curvance: "diamond", magma: "triangle", upshift: "bars", perpl: "waves", nadfun: "cube",
-  // Solana
   jupiter: "spark", kamino: "diamond", drift: "waves", marinade: "triangle", meteora: "wings", orca: "ring", raydium: "triangle", other: "diamond", pumpfun: "cube", jito: "bars",
 };
 
