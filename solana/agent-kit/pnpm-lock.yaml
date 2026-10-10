@@ -7,7 +7,7 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@orca-so/whirlpools':
         specifier: 8.0.1
         version: 8.0.1(@solana/kit@5.5.1(typescript@5.9.3))(typescript@5.9.3)
@@ -17,7 +17,9 @@ importers:
       zod:
         specifier: 4.3.6
         version: 4.3.6
-    devDependencies:
+      esbuild:
+        specifier: 0.27.7
+        version: 0.27.7
       '@types/node':
         specifier: 22.19.12
         version: 22.19.12

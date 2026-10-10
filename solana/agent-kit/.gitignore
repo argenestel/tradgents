@@ -2,3 +2,5 @@ node_modules/
 .pnpm-store/
 .env
 *.json.key
+tradgents.mjs
+tradgents.mjs.sha256

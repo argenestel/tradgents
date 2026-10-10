@@ -1,29 +1,43 @@
 {
-  "name": "tradgents-agent-kit",
-  "private": true,
+  "name": "tradgents",
   "type": "module",
   "bin": {
-    "tradgents": "./src/cli.ts",
-    "tradgents-signer": "./src/signer-main.ts"
+    "tradgents": "./tradgents.mjs"
   },
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
     "tradgents": "tsx src/cli.ts",
-    "signer": "tsx src/signer-main.ts",
+    "signer": "tsx src/signer-entry.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@orca-so/whirlpools": "8.0.1",
-    "@solana/kit": "5.5.1",
-    "zod": "4.3.6"
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build"
   },
   "devDependencies": {
+    "@orca-so/whirlpools": "8.0.1",
+    "@solana/kit": "5.5.1",
+    "zod": "4.3.6",
     "@types/node": "22.19.12",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
-    "vitest": "4.0.18"
+    "vitest": "4.0.18",
+    "esbuild": "0.27.7"
+  },
+  "version": "1.0.0",
+  "description": "Policy-enforced Solana trading tools and stdio MCP for public agents",
+  "files": [
+    "tradgents.mjs",
+    "tradgents.mjs.sha256",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/argenestel/tradgents.git",
+    "directory": "solana/agent-kit"
   }
 }

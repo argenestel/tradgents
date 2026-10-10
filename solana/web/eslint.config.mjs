@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated agent CLI bundle served from /cli (built by pnpm cli:sync).
+    "public/cli/**",
   ]),
 ]);
 

@@ -36,7 +36,7 @@ export const policySchema = z.object({
   minLiquidityUsd: z.number().nonnegative().default(25_000),
   maxBondSol: z.number().nonnegative().max(100).default(0.5),
   /** Every swap, however small, pays network fees, so the number of trades per rolling day is capped too. */
-  maxTradesPerDay: z.number().int().positive().max(10_000).default(50),
+  maxTradesPerDay: z.number().int().positive().max(10_000).default(20),
   /** If set, every program the simulation shows being invoked must be on this list (plus the built-in infrastructure and Jupiter). */
   routePrograms: z.array(z.string().min(32).max(44)).optional(),
   allowedMints: z.record(mint, z.string().min(1).max(12)).optional(),

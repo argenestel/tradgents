@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cli:sync": "pnpm --dir ../agent-kit build && mkdir -p public/cli && cp ../agent-kit/tradgents.mjs ../agent-kit/tradgents.mjs.sha256 public/cli/"
   },
   "dependencies": {
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",
