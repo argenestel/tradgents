@@ -48,6 +48,7 @@ export function Waterfall({ items, unrealizedUsd }: { items: { label: PnlCompone
         const left = x(Math.min(r.start, r.end));
         const width = Math.max(0.8, Math.abs(x(r.end) - x(r.start)));
         const pos = r.usd >= 0;
+        const flat = Math.abs(r.usd) < 0.0005; // would print as $0.000: no colour, no arrow
         const tone = r.total ? "bg-fg" : r.estimated ? "hatch" : pos ? "bg-[#1a9d6a]" : "bg-[#d94a43]";
         return (
           <div key={r.key} role="row" className={`grid grid-cols-[minmax(96px,150px)_1fr_5.75rem] items-center gap-3 py-[7px] ${r.total ? "mt-1 border-t-2 border-fg pt-3" : "border-b border-line"}`}>
@@ -56,8 +57,8 @@ export function Waterfall({ items, unrealizedUsd }: { items: { label: PnlCompone
               <span aria-hidden className="absolute inset-y-[-7px] w-px bg-line" style={{ left: `${zero}%` }} />
               <span aria-hidden className={`absolute inset-y-[3px] rounded-[2px] ${tone}`} style={{ left: `${left}%`, width: `${width}%` }} />
             </div>
-            <div role="cell" className={`num text-right text-[14px] ${r.total ? "font-extrabold" : "font-bold"} ${pos ? "text-gain" : "text-loss"}`}>
-              <span aria-hidden className="mr-1 text-[9px]">{pos ? "▲" : "▼"}</span>
+            <div role="cell" className={`num text-right text-[14px] ${r.total ? "font-extrabold" : "font-bold"} ${flat ? "text-muted" : pos ? "text-gain" : "text-loss"}`}>
+              {!flat && <span aria-hidden className="mr-1 text-[9px]">{pos ? "▲" : "▼"}</span>}
               {usd(r.usd, { sign: true })}
             </div>
           </div>

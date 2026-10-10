@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 import { CHAIN_UI } from "@/lib/chain";
 import { dateLabel, pct, timeLabel, usd } from "@/lib/format";
+
+/** Drawdown is in percent points shown to one decimal; below 0.05 it reads as 0.0% and gets no colour. */
+const ddClass = (v: number) => (Math.abs(v) < 0.05 ? "text-muted" : "text-loss");
 import type { EquityPoint } from "@/lib/types";
 
 const W = 800;
@@ -17,6 +20,16 @@ function line(vals: number[], lo: number, hi: number, h: number): string {
 
 const niceUsd = (v: number, range: number) =>
   range >= 20 ? `$${(Math.round(v / (range >= 200 ? 50 : 5)) * (range >= 200 ? 50 : 5)).toLocaleString("en-US")}` : `$${v.toFixed(range >= 2 ? 1 : 2)}`;
+
+/** Labels for the y ticks: add decimals until every tick reads differently (a $0.01 range would otherwise show "$5.52" three times). */
+function tickLabels(ticks: number[], range: number): string[] {
+  if (range >= 20) return ticks.map((t) => niceUsd(t, range));
+  for (let digits = range >= 2 ? 1 : 2; digits <= 4; digits++) {
+    const labels = ticks.map((t) => `$${t.toFixed(digits)}`);
+    if (new Set(labels).size === labels.length) return labels;
+  }
+  return ticks.map((t) => `$${t.toFixed(4)}`);
+}
 
 /** Equity vs buy-and-hold (both in USD from the same start) with a drawdown panel. Hover for a readout. */
 export function EquityChart({ points }: { points: EquityPoint[] }) {
@@ -40,11 +53,15 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
 
   const n = points.length;
   const short = points[n - 1].t - points[0].t < 3 * 86_400_000;
-  const label = short ? timeLabel : dateLabel;
+  // Date-only labels repeat on a span of a few days, so fall back to date and time (and fewer ticks) when they would.
+  const dayTicks = Array.from({ length: 6 }, (_, k) => Math.round((k / 5) * (n - 1)));
+  const useTime = short || new Set(dayTicks.map((k) => dateLabel(points[k].t))).size < dayTicks.length;
+  const label = useTime ? timeLabel : dateLabel;
+  const xTicks = useTime ? Array.from({ length: 4 }, (_, k) => Math.round((k / 3) * (n - 1))) : dayTicks;
   const i = hover ?? n - 1;
   const yOf = (v: number) => ((d.hi - v) / (d.hi - d.lo)) * 100;
   const ticks = [d.hi - (d.hi - d.lo) * 0.08, (d.hi + d.lo) / 2, d.lo + (d.hi - d.lo) * 0.08];
-  const xTicks = Array.from({ length: 6 }, (_, k) => Math.round((k / 5) * (n - 1)));
+  const yLabels = tickLabels(ticks, d.hi - d.lo);
   const ddY = (v: number) => (v / d.ddMin) * 100;
 
   function onMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -66,7 +83,7 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
           <span className="font-semibold text-muted">Just holding {CHAIN_UI.benchmark}</span>
           <b className="num">{usd(d.bench[i])}</b>
         </span>
-        <span className="text-muted">Drop from peak <b className="num text-loss">{pct(d.dd[i], { digits: 1 })}</b></span>
+        <span className="text-muted">Drop from peak <b className={`num ${ddClass(d.dd[i])}`}>{pct(d.dd[i], { digits: 1 })}</b></span>
       </div>
 
       <div
@@ -76,9 +93,9 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
         role="img"
         aria-label={`Equity vs ${CHAIN_UI.benchmark} buy-and-hold. Agent ${usd(d.agent[n - 1])}, benchmark ${usd(d.bench[n - 1])}.`}
       >
-        {ticks.map((t) => (
+        {ticks.map((t, k) => (
           <span key={t} className="num pointer-events-none absolute left-0 w-12 -translate-y-1/2 text-right text-[11px] text-muted" style={{ top: `${yOf(t)}%` }}>
-            {niceUsd(t, d.hi - d.lo)}
+            {yLabels[k]}
           </span>
         ))}
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[210px] w-full">
@@ -125,7 +142,7 @@ export function EquityChart({ points }: { points: EquityPoint[] }) {
             vectorEffect="non-scaling-stroke"
           />
         </svg>
-        <span className="num absolute right-0 -translate-y-1/2 pl-3 text-[12px] font-semibold text-loss" style={{ top: `${6 + (ddY(d.dd[n - 1]) / 100) * 72}px` }}>
+        <span className={`num absolute right-0 -translate-y-1/2 pl-3 text-[12px] font-semibold ${ddClass(d.dd[n - 1])}`} style={{ top: `${6 + (ddY(d.dd[n - 1]) / 100) * 72}px` }}>
           {pct(d.dd[n - 1], { digits: 1 })}
         </span>
       </div>

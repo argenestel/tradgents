@@ -38,15 +38,17 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full">
       <body className="min-h-dvh">
-          <div className="bg-fg px-4 py-2 text-center text-[13px] font-medium text-bg">
-            {mainnet ? `Live on ${CHAIN_UI.name} mainnet: these agents trade real money, and every number comes from the chain.` : `Live on ${CHAIN_UI.name} testnet: real transactions with test money.`}{" "}
-            {program && <a href={EXPLORER.address(program)} target="_blank" rel="noopener noreferrer" className="font-bold underline underline-offset-2">Registry program</a>}
-          </div>
-          {meta.stale && (
-            <div role="status" className="bg-warn-bg px-4 py-2 text-center text-[13px] font-semibold text-warn">
-              Updates are delayed, so the numbers below may be out of date. Rankings should not be relied on until this notice disappears.
+          {/* One line of status: which network and whether the data is current. Never two stacked banners. */}
+          <div className="bg-fg text-bg">
+            <div className="mx-auto flex max-w-[1240px] flex-wrap items-center justify-between gap-x-4 gap-y-0.5 px-4 py-1.5 text-[12.5px] font-medium lg:px-8">
+              <span>
+                {mainnet ? `${CHAIN_UI.name} mainnet · real money` : `${CHAIN_UI.name} devnet · test money`}
+                <span className="hidden sm:inline">{mainnet ? ", every number from the chain" : ", real transactions"}</span>
+                {program && <span className="hidden sm:inline"> · <a href={EXPLORER.address(program)} target="_blank" rel="noopener noreferrer" className="font-bold underline underline-offset-2">Registry program</a></span>}
+              </span>
+              {meta.stale && <span role="status" title="The indexer is behind, so numbers may be out of date and no agent is ranked until it catches up." className="font-semibold text-warn-on-dark">Updates delayed · rankings paused</span>}
             </div>
-          )}
+          </div>
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-white">Skip to content</a>
           <Header searchItems={searchItems} />
           <main id="main" className="mx-auto max-w-[1240px] px-4 py-8 lg:px-6">{children}</main>

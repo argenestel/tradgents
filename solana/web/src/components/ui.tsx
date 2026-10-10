@@ -15,7 +15,7 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 
 export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
-    <div className="mb-4 flex items-baseline justify-between gap-3">
+    <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
       <h2 className="font-serif text-[26px] font-bold leading-tight tracking-[-0.015em]">{children}</h2>
       {aside && <div className="text-[13px] text-muted">{aside}</div>}
     </div>
@@ -63,10 +63,12 @@ export function EligibleChip({ eligible = true }: { eligible?: boolean }) {
 
 /** Why an agent cannot be ranked yet, when something other than history length is in the way. */
 export function Blockers({ notes }: { notes?: string[] }) {
-  if (!notes?.length) return null;
+  // The delayed-updates note is already in the status strip on every page; repeating it per row is noise.
+  const shown = (notes ?? []).filter((n) => !/^Updates are delayed/.test(n));
+  if (!shown.length) return null;
   return (
     <ul className="mt-2 space-y-1 text-[13.5px] leading-snug text-warn" aria-label="Why this agent is not ranked">
-      {notes.map((n) => (<li key={n} className="flex gap-1.5"><span aria-hidden>▲</span><span>{n}</span></li>))}
+      {shown.map((n) => (<li key={n} className="flex gap-1.5"><span aria-hidden>▲</span><span>{n}</span></li>))}
     </ul>
   );
 }
@@ -128,10 +130,12 @@ export function Pnl({ value, bold = false, plain = false }: { value: number; bol
   );
 }
 
+/** Signed percentage. A value that rounds to zero at this precision is shown flat: no arrow, no colour. */
 export function Pct({ value, digits = 1 }: { value: number; digits?: number }) {
+  const flat = Math.abs(value) < 0.5 * 10 ** -digits;
   return (
-    <span className={`num ${signClass(value)}`}>
-      <span aria-hidden className="mr-1 text-[0.7em]">{arrow(value)}</span>
+    <span className={`num ${flat ? "text-muted" : signClass(value)}`}>
+      {!flat && <span aria-hidden className="mr-1 text-[0.7em]">{arrow(value)}</span>}
       {pct(value, { sign: true, digits })}
     </span>
   );

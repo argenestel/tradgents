@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { EXPLORER } from "@/lib/config";
-import { num, shortAddr, timeAgo, usd } from "@/lib/format";
+import { num, pct, shortAddr, timeAgo, usd } from "@/lib/format";
 import { interactionTitle, PROTOCOLS } from "@/lib/protocols";
 import type { Interaction, Metrics, PostView } from "@/lib/types";
 import { CallCard } from "./CallCard";
@@ -22,19 +22,27 @@ function Check() {
 function TradeEmbed({ i }: { i: Interaction }) {
   const [from, to] = [i.legs[0]?.symbol ?? "?", i.legs[1]?.symbol ?? "?"];
   const p = PROTOCOLS[i.protocol];
+  const amount = Math.abs(i.legs[0]?.delta ?? 0);
+  const retPct = i.notionalUsd ? (i.pnlUsd / i.notionalUsd) * 100 : 0;
   return (
     <details className="group mt-3 overflow-hidden rounded-xl border border-line bg-surface">
-      <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-        <span className="flex items-center -space-x-2"><TokenIcon symbol={from} size={30} /><TokenIcon symbol={to} size={30} /></span>
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-3.5 py-3 hover:bg-surface-2/60 [&::-webkit-details-marker]:hidden">
+        <span className="hidden shrink-0 items-center -space-x-2 sm:flex"><TokenIcon symbol={from} size={30} /><TokenIcon symbol={to} size={30} /></span>
         <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-bold leading-tight">{from} → {to}</div>
-          <div className="num text-[13px] text-muted">{usd(i.notionalUsd)} on {p.name}{i.meta.note ? " · cost carried over" : ""}</div>
+          <div className="flex flex-wrap items-baseline gap-x-2 leading-tight">
+            <span className="text-[15px] font-bold">{from} → {to}</span>
+            <span className="num text-[13px] text-muted">{num(amount, amount < 10 ? 3 : 1)} {from}</span>
+          </div>
+          <div className="num truncate text-[13px] text-muted">{usd(i.notionalUsd)} on {p.name}{i.meta.note ? " · cost carried over" : ""}</div>
         </div>
-        <div className="text-right">
-          <div className="text-[18px] font-extrabold leading-tight"><Pnl value={i.pnlUsd} bold /></div>
-          <div className="text-[12px] text-muted">result</div>
+        <div className="shrink-0 whitespace-nowrap text-right">
+          <div className="text-[16px] font-extrabold leading-tight"><Pnl value={i.pnlUsd} bold /></div>
+          <div className="num text-[12px] text-muted">{pct(retPct, { sign: true, digits: Math.abs(retPct) < 0.1 ? 2 : 1 })}</div>
         </div>
-        <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden className="text-muted transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m2.5 4.5 3.5 3.5 3.5-3.5" /></svg>
+        <span className="inline-flex shrink-0 items-center gap-1 text-[12px] font-semibold text-muted">
+          <span className="hidden sm:inline">Details</span>
+          <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden className="transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m2.5 4.5 3.5 3.5 3.5-3.5" /></svg>
+        </span>
       </summary>
       <div className="border-t border-line p-3"><InteractionCard i={i} /></div>
     </details>
@@ -72,15 +80,13 @@ export function FeedPost({ post, metrics }: { post: PostView; metrics?: Metrics 
 
         {metrics && post.type !== "trade" && <div className="mt-2"><SharpeLine m={metrics} /></div>}
 
-        <footer className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-muted">
-          <Link href={`/agents/${a.slug}`} className="font-semibold hover:text-fg hover:underline">Profile</Link>
-          {post.type === "trade" && post.interaction && (
+        {post.type === "trade" && post.interaction && (
+          <footer className="mt-2.5 text-[13px] text-muted">
             <a href={EXPLORER.tx(post.interaction.signature)} target="_blank" rel="noopener noreferrer" className="font-semibold hover:text-fg hover:underline" aria-label="Open the transaction in the explorer">
               Transaction {shortAddr(post.interaction.signature)}
             </a>
-          )}
-          {post.type === "trade" && post.interaction && <span className="num">{num(Math.abs(post.interaction.legs[0]?.delta ?? 0), 3)} {post.interaction.legs[0]?.symbol}</span>}
-        </footer>
+          </footer>
+        )}
       </div>
     </article>
   );

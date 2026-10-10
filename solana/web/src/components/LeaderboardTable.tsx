@@ -19,6 +19,7 @@ const WINDOWS: { key: WindowKey; label: string }[] = [
 ];
 const TIERS: Tier[] = ["<$250", "$250–2.5k", "$2.5k–25k", ">$25k"];
 const sel = "min-h-10 rounded-md border border-line bg-surface px-3 py-2 text-[14px] font-medium text-fg";
+const selectCls = `select ${sel}`;
 
 type SortKey = "sharpe" | "return" | "excess" | "dd" | "live";
 const SORTS: Record<SortKey, { label: string; get: (m: Metrics) => number; defaultDir: "asc" | "desc" }> = {
@@ -90,6 +91,7 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
   const domain = useMemo(() => domainFor(ranked.map((r) => ({ lo: r.metrics[win].sharpeLo, hi: r.metrics[win].sharpeHi }))), [ranked, win]);
   const filtersActive = !!(protocol || runtime || tier || verifiedOnly);
   const luckCount = ranked.filter((r) => r.metrics[win].sharpeLo <= 0).length;
+  const nobodyRanked = rows.every((r) => !r.metrics[win].eligible);
 
   if (rows.length === 0) {
     return (
@@ -107,7 +109,9 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
       <div className="mb-7 max-w-3xl">
         <h1 className="display text-[44px] sm:text-[64px]">Who has an edge, and who got lucky?</h1>
         <p className="mt-4 max-w-2xl text-[18px] leading-relaxed text-muted">
-          Each bar is the range an agent&apos;s Sharpe score could plausibly fall in. When a bar reaches back to zero, the agent&apos;s record is too short to tell skill from chance.
+          {nobodyRanked
+            ? <>Nobody has the 7 days and 10 trades it takes to be ranked yet. The early results below are real numbers without a rank, because with this little history nobody can tell skill from chance.</>
+            : <>Each bar is the range an agent&apos;s Sharpe score could plausibly fall in. When a bar reaches back to zero, the agent&apos;s record is too short to tell skill from chance.</>}
         </p>
       </div>
 
@@ -119,15 +123,15 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
             </button>
           ))}
         </div>
-        <select aria-label="Protocol" className={sel} value={protocol} onChange={(e) => set({ p: e.target.value })}>
+        <select aria-label="Protocol" className={selectCls} value={protocol} onChange={(e) => set({ p: e.target.value })}>
           <option value="">Any protocol</option>
           {PROTOCOL_LIST.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
         </select>
-        <select aria-label="Runtime" className={sel} value={runtime} onChange={(e) => set({ r: e.target.value })}>
+        <select aria-label="Runtime" className={selectCls} value={runtime} onChange={(e) => set({ r: e.target.value })}>
           <option value="">Any runtime</option>
           {(Object.keys(RUNTIMES) as RuntimeId[]).map((k) => (<option key={k} value={k}>{RUNTIMES[k].label}</option>))}
         </select>
-        <select aria-label="Capital tier" className={sel} value={tier} onChange={(e) => set({ t: e.target.value })}>
+        <select aria-label="Capital tier" className={selectCls} value={tier} onChange={(e) => set({ t: e.target.value })}>
           <option value="">Any size</option>
           {TIERS.map((t) => (<option key={t} value={t}>{t}</option>))}
         </select>
@@ -139,18 +143,18 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
         )}
         <label className="ml-auto flex items-center gap-2 text-[13px] font-semibold text-muted md:hidden">
           Sort by
-          <select aria-label="Sort by" className={sel} value={sortKey} onChange={(e) => set({ s: e.target.value, d: null })}>
+          <select aria-label="Sort by" className={selectCls} value={sortKey} onChange={(e) => set({ s: e.target.value, d: null })}>
             {(Object.keys(SORTS) as SortKey[]).map((k) => (<option key={k} value={k}>{SORTS[k].label}</option>))}
           </select>
         </label>
       </div>
 
-      <p className="mb-3 text-[14px] text-muted" aria-live="polite">
-        {ranked.length === 0 ? "No agent has enough history to be ranked yet. Early results are below." : <>
+      {(ranked.length > 0 || filtersActive) && <p className="mb-3 text-[14px] text-muted" aria-live="polite">
+        {ranked.length === 0 ? "No agent has enough history to be ranked with these filters." : <>
           <b className="text-fg">{ranked.length}</b> ranked{luckCount > 0 && <>, <b className="text-warn">{luckCount}</b> of them could still be luck</>}
           {young.length ? <>. {young.length} more {young.length === 1 ? "has" : "have"} too little history to rank.</> : "."}
         </>}
-      </p>
+      </p>}
 
       {(ranked.length > 0 || filtersActive) && (<>
       <div role="table" aria-label="Agent leaderboard" className="border-t-2 border-fg">
@@ -221,17 +225,15 @@ export function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
             {young.map((r) => {
               const m = r.metrics[win];
               return (
-                <li key={r.agent.slug} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3.5">
+                <li key={r.agent.slug} className="grid gap-y-3 py-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-x-8">
                   <div><AgentChip agent={r.agent} /><Blockers notes={r.notes} /></div>
-                  <div className="num flex flex-wrap items-center gap-x-6 gap-y-1 text-[14px]">
-                    {m.trades === 0 ? <span className="text-muted">No trades yet</span> : (
-                      <>
-                        <span className="text-[16px] font-bold"><Pct value={m.returnPct} /></span>
-                        <span className="text-muted">{m.trades} {m.trades === 1 ? "trade" : "trades"} over {m.days} {m.days === 1 ? "day" : "days"}</span>
-                        <span className="text-muted">{usd(r.equityUsd)} equity</span>
-                      </>
-                    )}
-                  </div>
+                  {m.trades === 0 ? <span className="text-[14px] text-muted">No trades yet</span> : (
+                    <dl className="num grid grid-cols-3 gap-x-6 text-[15px] sm:w-[21rem] sm:text-right">
+                      <div><dt className="font-sans text-[12px] text-muted">Return</dt><dd className="font-bold"><Pct value={m.returnPct} /></dd></div>
+                      <div><dt className="font-sans text-[12px] text-muted">Trades</dt><dd>{m.trades} <span className="text-muted">in {m.days}d</span></dd></div>
+                      <div><dt className="font-sans text-[12px] text-muted">Equity</dt><dd>{usd(r.equityUsd)}</dd></div>
+                    </dl>
+                  )}
                 </li>
               );
             })}
